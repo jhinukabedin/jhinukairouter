@@ -137,3 +137,49 @@ what would be deleted and why, and wait for his yes. Also recorded in
   provider-sdk); Agent 1 files compile cleanly.
 - Other builders' files already present in `apps/api/src/modules/`
   (gateway, providers, models, routing, usage, billing) were **not** touched.
+
+## Live wiring (20 Nov 2026 ~12:20–12:35 Asia/Dhaka, post-deploy)
+
+Found during the BHPanel deploy: every module was tested in isolation, but
+`buildApp` never registered the providers/models/routing/usage/billing
+dashboard routes or the `/v1` gateway — the deployed API answered only
+`/health` and `/api/v1/auth/*`. Fixed in `apps/api/src/modules/wiring.ts`
+(`registerAllModules`, called from `app.ts`):
+- Dashboard routes registered with session auth (providers/models via a
+  boolean guard; routing/usage/billing via a preHandler that also records
+  admin status for `isAdmin`).
+- Gateway registered encapsulated under prefix `/v1` (its auth hook must
+  not see non-`/v1` traffic). Key lookup is dynamic against Postgres
+  (`apiKey.findMany` by `keyHash` — added to the `Db` interface + FakeDb).
+  Chain resolution: an explicitly requested model resolves directly
+  (store resolver); otherwise the RoutingService (profiles/default mapping)
+  decides. Usage is recorded into the usage service (provider cost 0 and
+  marked as estimate — pricing not wired yet).
+- `apps/api/src/modules/static/index.ts` serves the built dashboard from
+  the API process (`PUBLIC_DIR`, default `./public`; the web `dist/` is
+  copied into the image). Reason: BHPanel has no per-path proxy, so the
+  whole site attaches to the container (see DEPLOYMENT.md Step 5).
+- `packages/protocols` and `packages/provider-sdk` are now **compiled to
+  dist** like shared/config (build scripts added; `main`/`types`/`exports`
+  point at dist; `declaration: true`; `rootDir: "src"`). They used to be
+  consumed as TypeScript source via Node type-stripping, which does NOT
+  resolve `.js` → `.ts` specifiers in this runtime (verified by repro on
+  Node v24.22.1) — the server crashed on startup once the gateway was
+  wired in. Their `import type` references to shared src are now package
+  imports (`@jhinuk-ai-router/shared`). This also fixed their pre-existing
+  `tsc` TS6059 typecheck failures.
+- Vitest configs (root + apps/api) now alias the four workspace packages
+  to their TS sources, so tests never load two copies of a package (src +
+  dist) — the dual copy broke `instanceof ProviderHttpError` and with it
+  gateway fallback (4 root tests failed before the alias).
+- Tests now **126/126**: root 72/72, apps/api 47/47 (was 42; +3 static,
+  +2 wiring), apps/web 7/7. API + web builds pass; typecheck clean in
+  shared/config/protocols/provider-sdk/api.
+- Live smoke test (no DB in this VM): `/` serves the dashboard (200),
+  `/health` ok v0.1.1, `/v1/models` 401 JSON without a key, dashboard
+  routes 401 without a session, `/health/ready` degraded (DB down here).
+
+Known limitation (standing design, not a bug): providers, models, routing
+profiles, usage rows and billing data live in **in-memory stores** and
+reset on container restart. Users, sessions and router API keys live in
+Postgres and survive restarts. Prisma-backed stores are a later step.
