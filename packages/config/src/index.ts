@@ -9,6 +9,11 @@ const hex64 = z
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  // Dashboard static files (apps/web/dist, copied into the image as
+  // ./public). Optional — when unset the API serves no dashboard files.
+  // Dashboard static files (apps/web/dist, copied into the image as
+  // ./public). Optional — when unset the API serves no dashboard files.
+  PUBLIC_DIR: z.string().optional(),
   // Optional: empty string counts as "not set".
   REDIS_URL: z
     .string()
