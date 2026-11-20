@@ -117,6 +117,7 @@ export interface Db {
   };
   userSession: {
     findUnique(args: { where: { id?: string; tokenHash?: string } }): Promise<SessionRow | null>;
+    findFirst(args: { where: { id?: string; tokenHash?: string } }): Promise<SessionRow | null>;
     findMany(args: { where: { userId: string } }): Promise<SessionRow[]>;
     create(args: {
       data: { userId: string; tokenHash: string; userAgent?: string | null; ip?: string | null; expiresAt: Date };
