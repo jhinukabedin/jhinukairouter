@@ -33,5 +33,5 @@ jobs:
           file: docker/Dockerfile.api
           push: true
           tags: |
-            ghcr.io/jhinukabedin/jhinukairouter-api:0.1.2
+            ghcr.io/jhinukabedin/jhinukairouter-api:0.1.3
             ghcr.io/jhinukabedin/jhinukairouter-api:latest
