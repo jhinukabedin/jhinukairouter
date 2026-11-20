@@ -51,6 +51,20 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     if (typeof error === 'object' && error !== null && 'validation' in error) {
       return reply.code(400).send({ error: { code: 'BAD_REQUEST', message: 'Invalid request' } });
     }
+    // Fastify's own errors (content-type parser, 404s, rate limit, ...)
+    // carry their own statusCode — honour it instead of masking every
+    // client mistake as a 500. (0.1.4: a body-less POST sent with
+    // Content-Type: application/json made the JSON parser throw
+    // FST_ERR_CTP_EMPTY_JSON_BODY, which landed here as a 500 and broke
+    // every body-less dashboard POST — Test, Sync Models, logout.)
+    const statusCode = (error as { statusCode?: unknown }).statusCode;
+    if (typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500) {
+      const code = (error as { code?: unknown }).code;
+      const message = error instanceof Error ? error.message : 'Request failed';
+      return reply
+        .code(statusCode)
+        .send({ error: { code: typeof code === 'string' ? code : 'BAD_REQUEST', message: message.slice(0, 500) } });
+    }
     fastify.log.error(error);
     return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
   });
