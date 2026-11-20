@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { authHeader, makeTestApp, registerUser } from '../../test/helpers.js';
+import { randomToken, sha256Hex } from '../../lib/crypto.js';
 
 describe('auth module', () => {
   it('registers the first user as SUPER_ADMIN and returns a session token', async () => {
@@ -36,6 +37,56 @@ describe('auth module', () => {
     const { app } = await makeTestApp({ REGISTRATION_ENABLED: false });
     const res = await app.inject({ method: 'POST', url: '/api/v1/auth/register', payload: { email: 'x@example.com', password: 'password123' } });
     expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('registration-status reports the effective flag and the DB setting overrides env', async () => {
+    const { app } = await makeTestApp();
+    const admin = await registerUser(app, 'statusadmin@example.com');
+    const status = async () => (await app.inject({ method: 'GET', url: '/api/v1/auth/registration-status' })).json() as { registrationEnabled: boolean };
+
+    // Env default is on, no setting stored yet.
+    expect((await status()).registrationEnabled).toBe(true);
+
+    // Admin turns it off via the system setting — registration now refused.
+    const off = await app.inject({
+      method: 'PATCH', url: '/api/v1/admin/system-settings', headers: authHeader(admin.token),
+      payload: { settings: { 'registration.enabled': false } },
+    });
+    expect(off.statusCode).toBe(200);
+    expect((await status()).registrationEnabled).toBe(false);
+    const blocked = await app.inject({ method: 'POST', url: '/api/v1/auth/register', payload: { email: 'nope@example.com', password: 'password123' } });
+    expect(blocked.statusCode).toBe(400);
+
+    // Admin turns it back on — registration works again, no restart.
+    const on = await app.inject({
+      method: 'PATCH', url: '/api/v1/admin/system-settings', headers: authHeader(admin.token),
+      payload: { settings: { 'registration.enabled': true } },
+    });
+    expect(on.statusCode).toBe(200);
+    expect((await status()).registrationEnabled).toBe(true);
+    const ok = await app.inject({ method: 'POST', url: '/api/v1/auth/register', payload: { email: 'yes@example.com', password: 'password123' } });
+    expect(ok.statusCode).toBe(201);
+    await app.close();
+  });
+
+  it('DB setting true re-enables registration even when the env var is off', async () => {
+    const { app, db } = await makeTestApp({ REGISTRATION_ENABLED: false });
+    // Registration is off, so seed the admin directly instead of registering.
+    const admin = await db.user.create({ data: { email: 'envadmin@example.com', passwordHash: 'seeded' } });
+    const role = await db.role.findUnique({ where: { name: 'SUPER_ADMIN' } });
+    await db.userRole.create({ data: { userId: admin.id, roleId: role?.id ?? '' } });
+    const token = randomToken(32);
+    await db.userSession.create({
+      data: { userId: admin.id, tokenHash: sha256Hex(token), userAgent: null, ip: null, expiresAt: new Date(Date.now() + 3_600_000) },
+    });
+    const on = await app.inject({
+      method: 'PATCH', url: '/api/v1/admin/system-settings', headers: authHeader(token),
+      payload: { settings: { 'registration.enabled': true } },
+    });
+    expect(on.statusCode).toBe(200);
+    const ok = await app.inject({ method: 'POST', url: '/api/v1/auth/register', payload: { email: 'on@example.com', password: 'password123' } });
+    expect(ok.statusCode).toBe(201);
     await app.close();
   });
 
