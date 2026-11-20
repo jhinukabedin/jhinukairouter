@@ -8,7 +8,7 @@ import type {
   ChatMessage,
   NormalizedChatRequest,
   NormalizedChatResponse,
-} from '../../shared/src/index.js';
+} from '@jhinuk-ai-router/shared';
 
 // ---------------------------------------------------------------------------
 // SSE helpers
