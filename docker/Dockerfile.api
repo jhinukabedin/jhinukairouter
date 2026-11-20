@@ -7,6 +7,7 @@ COPY packages/config/package.json packages/config/
 COPY packages/protocols/package.json packages/protocols/
 COPY packages/provider-sdk/package.json packages/provider-sdk/
 COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
 RUN npm install --workspaces --include-workspace-root --ignore-scripts
 COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
@@ -14,11 +15,15 @@ COPY packages/config packages/config
 COPY packages/protocols packages/protocols
 COPY packages/provider-sdk packages/provider-sdk
 COPY apps/api apps/api
+COPY apps/web apps/web
 COPY prisma prisma
 RUN npx prisma generate --schema prisma/schema.prisma
 RUN npm run build --workspace=packages/shared
 RUN npm run build --workspace=packages/config
+RUN npm run build --workspace=packages/protocols
+RUN npm run build --workspace=packages/provider-sdk
 RUN npm run build --workspace=apps/api
+RUN npm run build --workspace=apps/web
 
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
@@ -35,8 +40,12 @@ RUN npm install --workspaces --include-workspace-root --ignore-scripts --omit=de
 COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/packages/shared/dist packages/shared/dist
 COPY --from=build /app/packages/config/dist packages/config/dist
-COPY --from=build /app/packages/protocols/src packages/protocols/src
-COPY --from=build /app/packages/provider-sdk/src packages/provider-sdk/src
+COPY --from=build /app/packages/protocols/dist packages/protocols/dist
+COPY --from=build /app/packages/provider-sdk/dist packages/provider-sdk/dist
+# Built dashboard (served by the API itself at the same origin — see
+# apps/api/src/modules/static). BHPanel cannot proxy only /v1, /api and
+# /health, so the whole site attaches to this container instead.
+COPY --from=build /app/apps/web/dist public
 COPY --from=build /app/prisma prisma
 COPY --from=build /app/node_modules/.prisma node_modules/.prisma
 USER router
