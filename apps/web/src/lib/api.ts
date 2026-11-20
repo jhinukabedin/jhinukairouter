@@ -46,10 +46,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     body = null;
   }
   if (!res.ok) {
+    // The API returns errors as { error: { code, message } }; older shapes
+    // used a top-level message. Read both so the real reason shows instead
+    // of a bare "Request failed (401)".
+    const errObj = body && typeof body === 'object' ? (body as { error?: unknown; message?: unknown }) : null;
+    const nested =
+      errObj?.error && typeof errObj.error === 'object' && typeof (errObj.error as { message?: unknown }).message === 'string'
+        ? (errObj.error as { message: string }).message
+        : null;
     const msg =
-      (body && typeof body === 'object' && typeof (body as { message?: unknown }).message === 'string'
-        ? (body as { message: string }).message
-        : null) ?? `Request failed (${res.status})`;
+      (typeof errObj?.message === 'string' ? errObj.message : null) ?? nested ?? `Request failed (${res.status})`;
     throw new ApiError(res.status, msg);
   }
   return body as T;
@@ -140,9 +146,22 @@ export interface Paged<T> { data: T[]; total: number; page: number; limit: numbe
 
 export function normalizePaged<T>(body: unknown): Paged<T> {
   if (Array.isArray(body)) return { data: body as T[], total: body.length, page: 1, limit: body.length };
-  const b = (body ?? {}) as { data?: T[]; items?: T[]; total?: number; page?: number; limit?: number };
-  const data = b.data ?? b.items ?? [];
+  const b = (body ?? {}) as { data?: T[]; items?: T[]; logs?: T[]; total?: number; page?: number; limit?: number };
+  const data = b.data ?? b.items ?? b.logs ?? [];
   return { data, total: b.total ?? data.length, page: b.page ?? 1, limit: b.limit ?? data.length };
+}
+
+/** Single-object endpoints wrap the value as { data: ... }; pass bare values through. */
+export function unwrapData<T>(body: unknown): T {
+  const b = (body ?? {}) as { data?: T };
+  return (b.data ?? body) as T;
+}
+
+/** List endpoints that wrap the array under a named key ({ apiKeys, sessions, users }). */
+export function unwrapKey<T>(body: unknown, key: string): T[] {
+  if (Array.isArray(body)) return body as T[];
+  const v = (body ?? {}) as Record<string, unknown>;
+  return Array.isArray(v[key]) ? (v[key] as T[]) : [];
 }
 
 // ---------------------------------------------------------------- auth
@@ -153,7 +172,7 @@ export const api = {
     post<{ user: User; token: string }>('/api/v1/auth/login', data),
   logout: () => post('/api/v1/auth/logout'),
   me: () => get<User>('/api/v1/users/me'),
-  sessions: () => get<SessionItem[]>('/api/v1/auth/sessions'),
+  sessions: () => get('/api/v1/auth/sessions').then((b) => unwrapKey<SessionItem>(b, 'sessions')),
   revokeSession: (id: string) => del(`/api/v1/auth/sessions/${id}`),
   totpSetup: () => post<{ secret: string; qrUrl?: string }>('/api/v1/auth/totp/setup'),
   totpVerify: (code: string) => post('/api/v1/auth/totp/verify', { code }),
@@ -164,30 +183,31 @@ export const api = {
   registrationStatus: () => get<{ registrationEnabled: boolean }>('/api/v1/auth/registration-status'),
 
   // ------------------------------------------------------------ providers
-  listProviders: () => get<Provider[]>('/api/v1/providers'),
+  // The API wraps these as { data: ... }; unwrap here so pages get arrays/objects.
+  listProviders: () => get('/api/v1/providers').then((b) => normalizePaged<Provider>(b).data),
   createProvider: (data: {
     name: string; type: string; baseUrl: string; protocol: 'openai' | 'anthropic';
     apiKey?: string; enabled?: boolean; priority?: number; timeoutMs?: number;
-  }) => post<Provider>('/api/v1/providers', data),
+  }) => post('/api/v1/providers', data).then((b) => unwrapData<Provider>(b)),
   updateProvider: (id: string, data: Partial<Provider> & { apiKey?: string }) =>
-    patch<Provider>(`/api/v1/providers/${id}`, data),
+    patch(`/api/v1/providers/${id}`, data).then((b) => unwrapData<Provider>(b)),
   deleteProvider: (id: string) => del(`/api/v1/providers/${id}`),
-  testProvider: (id: string) => post<{ ok: boolean; latencyMs?: number; error?: string }>(`/api/v1/providers/${id}/test`),
-  syncProviderModels: (id: string) => post<{ synced: number; models: string[] }>(`/api/v1/providers/${id}/sync-models`),
+  testProvider: (id: string) => post(`/api/v1/providers/${id}/test`).then((b) => unwrapData<{ ok: boolean; latencyMs?: number; error?: string }>(b)),
+  syncProviderModels: (id: string) => post(`/api/v1/providers/${id}/sync-models`).then((b) => unwrapData<{ synced: number; models: string[] }>(b)),
 
   // --------------------------------------------------------------- models
-  listModels: () => get<AIModel[]>('/api/v1/models'),
+  listModels: () => get('/api/v1/models').then((b) => normalizePaged<AIModel>(b).data),
   updateModel: (id: string, data: Partial<AIModel> & { pricing?: Partial<ModelPricing> }) =>
-    patch<AIModel>(`/api/v1/models/${id}`, data),
+    patch(`/api/v1/models/${id}`, data).then((b) => unwrapData<AIModel>(b)),
   createModel: (data: {
     providerId: string; modelId: string; displayName?: string; contextWindow?: number;
     maxOutputTokens?: number; supportsStreaming?: boolean; supportsTools?: boolean;
     supportsVision?: boolean; supportsReasoning?: boolean; enabled?: boolean;
     inputPricePer1M?: number; outputPricePer1M?: number; currency?: string;
-  }) => post<AIModel>('/api/v1/models', data),
+  }) => post('/api/v1/models', data).then((b) => unwrapData<AIModel>(b)),
 
   // ------------------------------------------------------------- api keys
-  listApiKeys: () => get<ApiKeyItem[]>('/api/v1/api-keys'),
+  listApiKeys: () => get('/api/v1/api-keys').then((b) => unwrapKey<ApiKeyItem>(b, 'apiKeys')),
   createApiKey: (data: { name: string; expiresAt?: string }) => post<ApiKeyItem>('/api/v1/api-keys', data),
   deleteApiKey: (id: string) => del(`/api/v1/api-keys/${id}`),
   regenerateApiKey: (id: string) => post<ApiKeyItem>(`/api/v1/api-keys/${id}/regenerate`),
@@ -220,7 +240,7 @@ export const api = {
     post('/api/v1/credits/adjust', data),
 
   // ---------------------------------------------------------------- admin
-  adminUsers: () => get<(User & { roles?: string[] })[]>('/api/v1/admin/users'),
+  adminUsers: () => get('/api/v1/admin/users').then((b) => unwrapKey<User & { roles?: string[] }>(b, 'users')),
   adminCreateUser: (data: { email: string; password: string; name?: string; roles?: string[] }) =>
     post<User>('/api/v1/admin/users', data),
   adminUpdateUser: (id: string, data: Partial<User> & { roles?: string[] }) =>
