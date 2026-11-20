@@ -222,3 +222,51 @@ on/off should be controllable from the admin dashboard instead of an env var.
   recreate container (same env vars; the live env still has
   `REGISTRATION_ENABLED=false`, so the toggle will show OFF until the admin
   flips it — the DB row is created on first flip).
+
+## 0.1.3 — 20 Nov ~20:40 (fixes the live 401: login worked, every later call 401'd)
+
+- **Root cause (verified in code):** `UserSession.tokenHash` is only `@@index`
+  in `prisma/schema.prisma`, NOT `@unique` (contrast `PasswordResetToken.
+  tokenHash`, which IS `@unique`). `plugins/auth.ts` `authenticate()` used
+  `db.userSession.findUnique({ where: { tokenHash } })` — real Prisma throws
+  on `findUnique` over a non-unique field, the session guard in `wiring.ts`
+  swallows any error and returns false, so every authenticated dashboard
+  call 401'd. Login itself worked (it only creates the session row). The
+  user proved it live: F5 + re-login + refresh, mobile and PC, Providers
+  still showed the red 401 banner and Add provider 401'd. Tests never
+  caught it because `FakeDb.findUnique` just scans an array.
+- **Fix:** `authenticate()` now uses `findFirst` for the tokenHash lookup
+  (`apps/api/src/plugins/auth.ts`); `findFirst` added to the `Db` interface
+  (`apps/api/src/lib/db.ts`, PrismaClient has it natively). `FakeDb` gained
+  `findFirst`, and its `findUnique` now throws on `tokenHash` exactly like
+  real Prisma, so a regression fails the suite. New regression test in
+  `apps/api/src/modules/auth/auth.test.ts`: register → login token → GET
+  `/api/v1/providers` 200 + POST `/api/v1/providers` 201 (the exact user
+  flow). `User.email` / `Role.name` are `@unique`, so no sibling bug there.
+- **Second latent bug found while verifying the fix (would have bitten
+  immediately after the 401 fix):** the providers/models modules wrap
+  responses as `{ data: ... }`, but the web client treated them as bare
+  values — `listProviders`/`listModels` would hand the page an object, and
+  `providers.map` would crash. `apps/web/src/lib/api.ts` now unwraps:
+  `listProviders`/`listModels` via `normalizePaged().data`, `createProvider`
+  / `updateProvider` / `testProvider` / `syncProviderModels` /
+  `createModel` / `updateModel` via new `unwrapData`, `listApiKeys` via
+  `unwrapKey(..., 'apiKeys')` (API returns `{ apiKeys: [...] }`),
+  `sessions` via `unwrapKey(..., 'sessions')`, `adminUsers` via
+  `unwrapKey(..., 'users')`; `normalizePaged` also accepts `{ logs }`
+  (audit-logs). New web test `apps/web/src/lib/__tests__/api-shape.test.ts`.
+  Routing profiles, usage summary, wallet, users/me and admin user create
+  return bare values and needed no change. `/api/v1/admin/provider-health`
+  has no API route at all (web call is caught and defaults to []); left
+  for a later version.
+- **Third fix:** `api.ts` error parsing now reads `body.error.message` too
+  (the API returns `{ error: { code, message } }`; the client only read a
+  top-level `message`, so every error showed as bare "Request failed
+  (401)" and hid the real reason).
+- Version bumped to 0.1.3 (root + api package.json, health string, workflow
+  tags, DEPLOYMENT.md). Deploy = push → Actions build → GHCR 0.1.3 → BHPanel
+  recreate container (same env vars). After deploy the user re-tests: login
+  → Providers loads with no red banner → add Tokens.bd (OpenAI-compatible
+  protocol) → Test → Sync Models. The Tokens.bd key itself was verified
+  good on 20 Nov via the custom.tokens-bd connector (47 models incl.
+  openai/gpt-6-luna); the 401 was never a bad key.
