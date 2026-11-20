@@ -85,15 +85,15 @@ values in the panel, never commit them):
 Build on a machine with Docker (local PC or CI), then push to a registry
 the server can pull from (e.g. Docker Hub / GHCR — private repo):
 ```bash
-docker build -f docker/Dockerfile.api -t ghcr.io/jhinukabedin/jhinukairouter-api:0.1.1 .
-docker push ghcr.io/jhinukabedin/jhinukairouter-api:0.1.1
+docker build -f docker/Dockerfile.api -t ghcr.io/jhinukabedin/jhinukairouter-api:0.1.2 .
+docker push ghcr.io/jhinukabedin/jhinukairouter-api:0.1.2
 ```
 The image is small (node:24-alpine, production deps only, non-root user
 `router`, single Fastify process).
 
 ### Step 4 — Deploy the container in BHPanel (Podman, no Docker CLI)
 1. In BHPanel go to **Containers** (Podman).
-2. **Create / Deploy container** → image `ghcr.io/jhinukabedin/jhinukairouter-api:0.1.1`.
+2. **Create / Deploy container** → image `ghcr.io/jhinukabedin/jhinukairouter-api:0.1.2`.
 3. Set the container name, e.g. `router-api`.
 4. **Environment variables**: paste every var from the table above
    (DATABASE_URL pointing at the panel Postgres, PORT=3001, etc.).
@@ -125,7 +125,7 @@ container instead:
 4. Verify:
    ```bash
    curl -s https://router.developersbd.top/health
-   # {"status":"ok","service":"jhinuk-ai-router","version":"0.1.1",...}
+   # {"status":"ok","service":"jhinuk-ai-router","version":"0.1.2",...}
    curl -s https://router.developersbd.top/health/ready
    # {"status":"ready","checks":{"database":"up","redis":"optional"}}
    ```
