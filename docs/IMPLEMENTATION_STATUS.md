@@ -183,3 +183,42 @@ Known limitation (standing design, not a bug): providers, models, routing
 profiles, usage rows and billing data live in **in-memory stores** and
 reset on container restart. Users, sessions and router API keys live in
 Postgres and survive restarts. Prisma-backed stores are a later step.
+
+## 0.1.2 — mobile menu + admin registration toggle (20 Nov ~13:40, not yet deployed)
+
+User report: the dashboard menu does not show on phones, and registration
+on/off should be controllable from the admin dashboard instead of an env var.
+
+- **Mobile menu fixed** (`apps/web/src/components/Layout.tsx`): the sidebar
+  was `hidden ... md:block`, so phones had no navigation at all. There is now
+  a ☰ Menu button in the header (below `md` only) opening a slide-over drawer
+  with the same links; it closes on navigation (link click / hashchange).
+- **Registration toggle** (admin-controlled, no restart, no redeploy):
+  - New `apps/api/src/lib/settings.ts`: `isRegistrationEnabled(db, env)` —
+    the `SystemSetting` row `registration.enabled` (boolean) wins; when no row
+    exists the env var `REGISTRATION_ENABLED` applies (default true, so fresh
+    installs still bootstrap their first SUPER_ADMIN). Degraded mode (DB down)
+    falls back to env instead of 500ing.
+  - `POST /api/v1/auth/register` now uses that helper instead of the env var
+    directly; new public `GET /api/v1/auth/registration-status` reports the
+    effective flag.
+  - Admin page → System Settings tab has a **Registration ON/OFF toggle** at
+    the top (writes `registration.enabled` via the existing admin PATCH
+    endpoint). The login page hides the Register link and the register page
+    shows a notice when registration is off.
+  - **Fixed two latent bugs found while wiring the toggle:** the web client's
+    `systemSettings()` expected an array but the API returns
+    `{ settings: { key: value } }` (the System Settings tab would crash on
+    render), and `updateSystemSetting()` sent `{ key, value }` while the API
+    expects `{ settings: { key: value } }` (every edit was rejected). Both
+    now match the API.
+- Tests now **133**: root 72/72, apps/api 55/55 (was 47; +5 settings unit,
+  +2 auth full-loop incl. DB-true-overrides-env-false), apps/web 7/7. API +
+  web builds pass; typecheck clean. Live smoke test (no DB in this VM):
+  `/` 200, `/health` ok v0.1.2, `/api/v1/auth/registration-status`
+  `{"registrationEnabled":true}` (env default).
+- Version bumped to 0.1.2 (root + api package.json, health string, workflow
+  tags, DEPLOYMENT.md). Deploy = push → Actions build → GHCR 0.1.2 → BHPanel
+  recreate container (same env vars; the live env still has
+  `REGISTRATION_ENABLED=false`, so the toggle will show OFF until the admin
+  flips it — the DB row is created on first flip).
