@@ -130,7 +130,7 @@ export interface Db {
     update(args: { where: { id: string }; data: { usedAt: Date } }): Promise<ResetTokenRow>;
   };
   apiKey: {
-    findMany(args: { where: { userId: string } }): Promise<ApiKeyRow[]>;
+    findMany(args?: { where?: { userId?: string; keyHash?: string } }): Promise<ApiKeyRow[]>;
     findUnique(args: { where: { id: string } }): Promise<ApiKeyRow | null>;
     create(args: {
       data: { userId: string; name: string; keyHash: string; keyPrefix: string; expiresAt?: Date | null; restrictions?: unknown };
