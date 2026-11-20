@@ -34,7 +34,11 @@ export async function authPlugin(fastify: FastifyInstance, opts: AuthContext): P
     const token = header.slice('Bearer '.length).trim();
     if (token === '') throw unauthorized('Missing session token');
 
-    const session = await db.userSession.findUnique({ where: { tokenHash: sha256Hex(token) } });
+    // NOTE: tokenHash is only @@index in the Prisma schema, NOT @unique —
+    // Prisma's findUnique() throws on a non-unique field, which made every
+    // authenticated call 401 in production (login itself worked: it only
+    // creates the row). findFirst is the correct lookup here.
+    const session = await db.userSession.findFirst({ where: { tokenHash: sha256Hex(token) } });
     if (!session || session.revokedAt !== null || session.expiresAt.getTime() < Date.now()) {
       throw unauthorized('Invalid or expired session');
     }
