@@ -30,10 +30,14 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
+  // Only claim JSON when a body is actually sent. A body-less POST/DELETE
+  // with Content-Type: application/json makes Fastify's JSON parser reject
+  // the empty body (0.1.4: that is what broke Test / Sync Models / logout).
+  const hasBody = init.body !== undefined && init.body !== null;
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init.headers ?? {}),
     },
@@ -146,8 +150,8 @@ export interface Paged<T> { data: T[]; total: number; page: number; limit: numbe
 
 export function normalizePaged<T>(body: unknown): Paged<T> {
   if (Array.isArray(body)) return { data: body as T[], total: body.length, page: 1, limit: body.length };
-  const b = (body ?? {}) as { data?: T[]; items?: T[]; logs?: T[]; total?: number; page?: number; limit?: number };
-  const data = b.data ?? b.items ?? b.logs ?? [];
+  const b = (body ?? {}) as { data?: T[]; items?: T[]; logs?: T[]; rows?: T[]; total?: number; page?: number; limit?: number };
+  const data = b.data ?? b.items ?? b.logs ?? b.rows ?? [];
   return { data, total: b.total ?? data.length, page: b.page ?? 1, limit: b.limit ?? data.length };
 }
 
@@ -231,13 +235,21 @@ export const api = {
     const q = new URLSearchParams(params).toString();
     return get<Paged<UsageRecord> | UsageRecord[]>(`/api/v1/usage${q ? `?${q}` : ''}`);
   },
-  wallet: () => get<CreditWallet>('/api/v1/credits'),
+  wallet: () => get<CreditWallet>('/api/v1/credits/wallet'),
   transactions: (params: Record<string, string> = {}) => {
     const q = new URLSearchParams(params).toString();
     return get<Paged<CreditTransaction> | CreditTransaction[]>(`/api/v1/credits/transactions${q ? `?${q}` : ''}`);
   },
   adjustCredits: (data: { userId: string; amount: number; description?: string }) =>
-    post('/api/v1/credits/adjust', data),
+    // The API requires `targetUserId` and an `idempotencyKey`; the page
+    // passes the user's id as `userId`, so map it here and mint a key
+    // per submission (without it the API 400s on every adjust).
+    post('/api/v1/credits/adjust', {
+      targetUserId: data.userId,
+      amount: data.amount,
+      idempotencyKey: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      description: data.description,
+    }),
 
   // ---------------------------------------------------------------- admin
   adminUsers: () => get('/api/v1/admin/users').then((b) => unwrapKey<User & { roles?: string[] }>(b, 'users')),
