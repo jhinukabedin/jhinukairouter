@@ -14,6 +14,7 @@ import { hashPassword, verifyPassword } from '../../lib/password.js';
 import { generateTotpCode, generateTotpSecret, totpAuthUrl, verifyTotpCode } from '../../lib/totp.js';
 import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
+import { isRegistrationEnabled } from '../../lib/settings.js';
 import type { Env } from '@jhinuk-ai-router/config';
 
 export interface AuthModuleOptions {
@@ -84,8 +85,15 @@ export async function authRoutes(fastify: FastifyInstance, opts: AuthModuleOptio
   const { db, env } = opts;
   const prefix = '/api/v1/auth';
 
+  // Public: does the dashboard currently accept new registrations?
+  // The login/register pages use this to hide the sign-up link; the admin
+  // flips the flag from Admin → System Settings (DB setting wins over env).
+  fastify.get(`${prefix}/registration-status`, async () => {
+    return { registrationEnabled: await isRegistrationEnabled(db, env) };
+  });
+
   fastify.post(`${prefix}/register`, async (request, reply) => {
-    if (!env.REGISTRATION_ENABLED) throw badRequest('Registration is disabled', 'REGISTRATION_DISABLED');
+    if (!(await isRegistrationEnabled(db, env))) throw badRequest('Registration is disabled', 'REGISTRATION_DISABLED');
     const body = parseBody(registerSchema, request);
     const existing = await db.user.findUnique({ where: { email: body.email } });
     if (existing) throw conflict('An account with this email already exists');
