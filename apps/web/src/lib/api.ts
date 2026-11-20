@@ -161,6 +161,8 @@ export const api = {
   passwordResetConfirm: (token: string, password: string) =>
     post('/api/v1/auth/password-reset/confirm', { token, password }),
 
+  registrationStatus: () => get<{ registrationEnabled: boolean }>('/api/v1/auth/registration-status'),
+
   // ------------------------------------------------------------ providers
   listProviders: () => get<Provider[]>('/api/v1/providers'),
   createProvider: (data: {
@@ -229,9 +231,14 @@ export const api = {
     const q = new URLSearchParams(params).toString();
     return get<Paged<AuditLog> | AuditLog[]>(`/api/v1/admin/audit-logs${q ? `?${q}` : ''}`);
   },
-  systemSettings: () => get<SystemSetting[]>('/api/v1/admin/system-settings'),
+  // The API returns { settings: { key: value } }; the pages want an array.
+  systemSettings: async () => {
+    const res = await get<{ settings: Record<string, unknown> }>('/api/v1/admin/system-settings');
+    return Object.entries(res.settings ?? {}).map(([key, value]) => ({ key, value }));
+  },
+  // The API expects { settings: { key: value } } (PATCH), not { key, value }.
   updateSystemSetting: (key: string, value: unknown) =>
-    patch(`/api/v1/admin/system-settings`, { key, value }),
+    patch(`/api/v1/admin/system-settings`, { settings: { [key]: value } }),
   providerHealth: () => get<ProviderHealthItem[]>('/api/v1/admin/provider-health'),
   health: () => get<HealthStatus>('/health'),
   healthReady: () => get<HealthStatus>('/health/ready'),
