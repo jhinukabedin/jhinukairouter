@@ -199,4 +199,25 @@ describe('auth module', () => {
     expect(res.statusCode).toBe(401);
     await app.close();
   });
+
+  it('authenticates a logged-in session for the providers routes (0.1.3 regression)', async () => {
+    // Production 0.1.2: login succeeded but every later call 401'd, because
+    // authenticate() used findUnique on UserSession.tokenHash, which is only
+    // @@index in the schema, not @unique — real Prisma throws on that, the
+    // session guard swallowed it and returned 401. The FakeDb now throws
+    // the same way, so this test fails if findUnique ever comes back.
+    const { app } = await makeTestApp();
+    const { token } = await registerUser(app, 'prov@example.com');
+    const list = await app.inject({ method: 'GET', url: '/api/v1/providers', headers: authHeader(token) });
+    expect(list.statusCode).toBe(200);
+    expect((list.json() as { data: unknown[] }).data).toEqual([]);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers',
+      headers: authHeader(token),
+      payload: { name: 'Tokensbd', type: 'tokens', baseUrl: 'https://tokens.bd/v1', protocol: 'openai', apiKey: 'tok_test_key', priority: 100, timeoutMs: 30000, enabled: true },
+    });
+    expect(created.statusCode).toBe(201);
+    await app.close();
+  });
 });
