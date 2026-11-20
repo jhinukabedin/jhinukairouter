@@ -59,8 +59,9 @@ values in the panel, never commit them):
 2. Go to **Websites** (or **Domains → Subdomains**).
 3. Create subdomain **`router`** under domain **`developersbd.top`**
    → document root e.g. `/home/devel4510/router.developersbd.top`
-   (the API container does not need the document root; it is used for the
-   static dashboard build).
+   (the document root is only a placeholder now: the API container serves
+   the dashboard itself, and the whole site is attached to the container
+   in Step 5).
 4. Wait for DNS to resolve: `router.developersbd.top` should answer
    (it already resolves to the server IP, but no site exists yet).
 
@@ -84,15 +85,15 @@ values in the panel, never commit them):
 Build on a machine with Docker (local PC or CI), then push to a registry
 the server can pull from (e.g. Docker Hub / GHCR — private repo):
 ```bash
-docker build -f docker/Dockerfile.api -t ghcr.io/jhinukabedin/jhinukairouter-api:0.1.0 .
-docker push ghcr.io/jhinukabedin/jhinukairouter-api:0.1.0
+docker build -f docker/Dockerfile.api -t ghcr.io/jhinukabedin/jhinukairouter-api:0.1.1 .
+docker push ghcr.io/jhinukabedin/jhinukairouter-api:0.1.1
 ```
 The image is small (node:24-alpine, production deps only, non-root user
 `router`, single Fastify process).
 
 ### Step 4 — Deploy the container in BHPanel (Podman, no Docker CLI)
 1. In BHPanel go to **Containers** (Podman).
-2. **Create / Deploy container** → image `ghcr.io/jhinukabedin/jhinukairouter-api:0.1.0`.
+2. **Create / Deploy container** → image `ghcr.io/jhinukabedin/jhinukairouter-api:0.1.1`.
 3. Set the container name, e.g. `router-api`.
 4. **Environment variables**: paste every var from the table above
    (DATABASE_URL pointing at the panel Postgres, PORT=3001, etc.).
@@ -104,28 +105,32 @@ The image is small (node:24-alpine, production deps only, non-root user
 8. Start the container and check its logs for
    `[router] listening on http://0.0.0.0:3001`.
 
-### Step 5 — Nginx reverse proxy + HTTPS (AutoSSL)
-1. In BHPanel, open the **router.developersbd.top** site settings
-   (Websites → the subdomain → proxy / Nginx settings, or the panel's
-   Node.js / reverse-proxy section — exact labels vary by BHPanel version).
-2. Proxy these paths to `http://127.0.0.1:3001`:
-   - `/v1/` → gateway (SSE streaming: **disable proxy buffering**, read
-     timeout 300s)
-   - `/api/` → dashboard API (timeout 60s)
-   - `/health` → health check
-3. Serve the dashboard: build `apps/web` (`npm run build`) and upload the
-   `dist/` contents to `/home/devel4510/router.developersbd.top/` so `/`
-   serves the static files (fallback to `index.html` for SPA routes).
-   Reference config for a plain-Nginx host: `docker/nginx.conf`.
-4. Enable **AutoSSL / Let's Encrypt** for `router.developersbd.top`
+### Step 5 — Attach the site to the container + HTTPS (AutoSSL)
+BHPanel has **no per-path proxy** (verified 20 Nov 2026): it cannot proxy
+only `/v1/`, `/api/` and `/health` to the container while serving the rest
+from the document root. So the API serves the dashboard itself (the web
+`dist/` is built into the image as `./public` and served at the same
+origin — see `apps/api/src/modules/static`). Attach the WHOLE site to the
+container instead:
+1. In BHPanel, Containers → jhinuk-ai-router → Website → select
+   `router.developersbd.top`. The panel warns "the website then shows this
+   application instead of its own files" — that is what we want now: the
+   container serves the dashboard, the API and the health checks.
+2. The old static files in the document root
+   (`/home/devel4510/router.developersbd.top/`) are no longer used — the
+   container serves its own built copy. Leave them in place (harmless) or
+   remove them later; do not delete anything else.
+3. Enable **AutoSSL / Let's Encrypt** for `router.developersbd.top`
    (BHPanel → SSL/TLS Status → Run AutoSSL) and force HTTPS.
-5. Verify:
+4. Verify:
    ```bash
    curl -s https://router.developersbd.top/health
-   # {"status":"ok","service":"jhinuk-ai-router","version":"0.1.0",...}
+   # {"status":"ok","service":"jhinuk-ai-router","version":"0.1.1",...}
    curl -s https://router.developersbd.top/health/ready
    # {"status":"ready","checks":{"database":"up","redis":"optional"}}
    ```
+   The dashboard must load at `https://router.developersbd.top/` and
+   `/v1/models` must answer 401 without a key (not 404).
 
 ### Step 6 — First admin + lock down registration
 1. Register the first account at `https://router.developersbd.top/` —
