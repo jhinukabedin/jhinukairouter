@@ -4,14 +4,20 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/config/package.json packages/config/
+COPY packages/protocols/package.json packages/protocols/
+COPY packages/provider-sdk/package.json packages/provider-sdk/
 COPY apps/api/package.json apps/api/
 RUN npm install --workspaces --include-workspace-root --ignore-scripts
 COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
 COPY packages/config packages/config
+COPY packages/protocols packages/protocols
+COPY packages/provider-sdk packages/provider-sdk
 COPY apps/api apps/api
 COPY prisma prisma
 RUN npx prisma generate --schema prisma/schema.prisma
+RUN npm run build --workspace=packages/shared
+RUN npm run build --workspace=packages/config
 RUN npm run build --workspace=apps/api
 
 FROM node:24-alpine AS runtime
@@ -21,16 +27,22 @@ RUN addgroup -S router && adduser -S router -G router
 COPY package.json package-lock.json* ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/config/package.json packages/config/
+COPY packages/protocols/package.json packages/protocols/
+COPY packages/provider-sdk/package.json packages/provider-sdk/
 COPY apps/api/package.json apps/api/
 RUN npm install --workspaces --include-workspace-root --ignore-scripts --omit=dev \
     && npm cache clean --force
 COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/packages/shared/dist packages/shared/dist
 COPY --from=build /app/packages/config/dist packages/config/dist
+COPY --from=build /app/packages/protocols/src packages/protocols/src
+COPY --from=build /app/packages/provider-sdk/src packages/provider-sdk/src
 COPY --from=build /app/prisma prisma
 COPY --from=build /app/node_modules/.prisma node_modules/.prisma
 USER router
 EXPOSE 3001
 HEALTHCHECK --interval=15s --timeout=5s --retries=5 \
   CMD node -e "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "apps/api/dist/server.js"]
+# Apply pending DB migrations first (best-effort: the server still starts
+# degraded if the DB is unreachable), then start the API.
+CMD ["sh", "-c", "npx prisma migrate deploy --schema prisma/schema.prisma || true; exec node apps/api/dist/server.js"]
