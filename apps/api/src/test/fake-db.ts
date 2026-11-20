@@ -165,7 +165,12 @@ export class FakeDb implements Db {
   };
 
   apiKey = {
-    findMany: async ({ where }: { where: { userId: string } }) => this.apiKeys.filter((k) => k.userId === where.userId),
+    findMany: async (args?: { where?: { userId?: string; keyHash?: string } }) =>
+      this.apiKeys.filter(
+        (k) =>
+          (args?.where?.userId ? k.userId === args.where.userId : true) &&
+          (args?.where?.keyHash ? k.keyHash === args.where.keyHash : true),
+      ),
     findUnique: async ({ where }: { where: { id: string } }): Promise<ApiKeyRow | null> => this.apiKeys.find((k) => k.id === where.id) ?? null,
     create: async ({ data }: { data: { userId: string; name: string; keyHash: string; keyPrefix: string; expiresAt?: Date | null; restrictions?: unknown } }): Promise<ApiKeyRow> => {
       const row: ApiKeyRow = { id: randomUUID(), userId: data.userId, name: data.name, keyHash: data.keyHash, keyPrefix: data.keyPrefix, expiresAt: data.expiresAt ?? null, lastUsedAt: null, revokedAt: null, restrictions: data.restrictions ?? null, createdAt: new Date() };
