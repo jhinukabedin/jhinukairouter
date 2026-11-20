@@ -1,0 +1,36 @@
+# Small, single-process API image. No build tools in the final layer.
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json* ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/config/package.json packages/config/
+COPY apps/api/package.json apps/api/
+RUN npm install --workspaces --include-workspace-root --ignore-scripts
+COPY tsconfig.base.json ./
+COPY packages/shared packages/shared
+COPY packages/config packages/config
+COPY apps/api apps/api
+COPY prisma prisma
+RUN npx prisma generate --schema prisma/schema.prisma
+RUN npm run build --workspace=apps/api
+
+FROM node:24-alpine AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+RUN addgroup -S router && adduser -S router -G router
+COPY package.json package-lock.json* ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/config/package.json packages/config/
+COPY apps/api/package.json apps/api/
+RUN npm install --workspaces --include-workspace-root --ignore-scripts --omit=dev \
+    && npm cache clean --force
+COPY --from=build /app/apps/api/dist apps/api/dist
+COPY --from=build /app/packages/shared/dist packages/shared/dist
+COPY --from=build /app/packages/config/dist packages/config/dist
+COPY --from=build /app/prisma prisma
+COPY --from=build /app/node_modules/.prisma node_modules/.prisma
+USER router
+EXPOSE 3001
+HEALTHCHECK --interval=15s --timeout=5s --retries=5 \
+  CMD node -e "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "apps/api/dist/server.js"]

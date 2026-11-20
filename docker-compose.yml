@@ -1,0 +1,70 @@
+# Jhinuk AI Router — light stack.
+# API + Postgres are the minimum. Redis is optional (profile "redis"):
+#   docker compose up -d            # api + postgres
+#   docker compose --profile redis up -d   # + redis
+# The api service starts and serves /health and /v1 even with no Redis.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: router-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://router:${POSTGRES_PASSWORD:-router_dev_pw}@db:5432/jhinuk_router?schema=public
+      REDIS_URL: ${REDIS_URL:-}
+      PORT: "3001"
+      NODE_ENV: ${NODE_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://router.developersbd.top}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:?set ENCRYPTION_MASTER_KEY}
+      ROUTER_MASTER_KEY: ${ROUTER_MASTER_KEY:?set ROUTER_MASTER_KEY}
+      REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
+    ports:
+      - "${PORT:-3001}:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: postgres:16-alpine
+    container_name: router-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: router
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-router_dev_pw}
+      POSTGRES_DB: jhinuk_router
+    volumes:
+      - router_pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U router -d jhinuk_router"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    profiles: ["redis"]
+    image: redis:7-alpine
+    container_name: router-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  router_pgdata:

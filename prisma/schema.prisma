@@ -1,0 +1,377 @@
+// Jhinuk AI Router — lean Prisma schema (Agent 1 owns this file).
+// Model/field names follow CONTRACT.md exactly. Never store raw prompts or
+// provider keys in UsageRecord. CreditTransaction is immutable (no updates).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ProviderType {
+  openai
+  anthropic
+  gemini
+  deepseek
+  moonshot
+  glm
+  openrouter
+  tokens
+  ollama
+  custom
+}
+
+enum ProviderProtocol {
+  openai
+  anthropic
+}
+
+enum RoutingMode {
+  AUTOMATIC
+  MANUAL
+  HYBRID
+}
+
+enum UsageStatus {
+  SUCCESS
+  FAILED
+}
+
+enum ProviderHealthStatus {
+  UP
+  DEGRADED
+  DOWN
+}
+
+enum CreditTransactionType {
+  PURCHASE
+  DEBIT
+  REFUND
+  ADJUSTMENT
+}
+
+enum FallbackTrigger {
+  T429
+  T5XX
+  TIMEOUT
+  UNAVAILABLE
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique
+  passwordHash String
+  name         String?
+  totpSecret   String?
+  totpEnabled  Boolean    @default(false)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  roles        UserRole[]
+  sessions     UserSession[]
+  providers    Provider[]        @relation("ProviderOwner")
+  credentials  ProviderCredential[]
+  apiKeys      ApiKey[]
+  profiles     RoutingProfile[]
+  fallbackRules FallbackRule[]
+  usage        UsageRecord[]
+  wallet       CreditWallet?
+  auditLogs    AuditLog[]
+  teamsOwned   Team[]            @relation("TeamOwner")
+  teamMembers  TeamMember[]
+  resetTokens  PasswordResetToken[]
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id    String           @id @default(uuid()) @db.Uuid
+  name  String           @unique
+  roles RolePermission[]
+}
+
+model UserRole {
+  userId String @db.Uuid
+  roleId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model Team {
+  id      String       @id @default(uuid()) @db.Uuid
+  name    String
+  ownerId String       @db.Uuid
+  owner   User         @relation("TeamOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members TeamMember[]
+}
+
+model TeamMember {
+  teamId String @db.Uuid
+  userId String @db.Uuid
+  role   String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, userId])
+}
+
+model UserSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+// Not in CONTRACT.md — required by POST /auth/password-reset/* (Agent 1
+// addition, documented in docs/DATABASE.md). Token stored as SHA-256 hash.
+model PasswordResetToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Provider {
+  id         String           @id @default(uuid()) @db.Uuid
+  name       String
+  type       ProviderType
+  baseUrl    String
+  protocol   ProviderProtocol
+  enabled    Boolean          @default(true)
+  isGlobal   Boolean          @default(false)
+  ownerId    String?          @db.Uuid
+  owner      User?            @relation("ProviderOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  priority   Int              @default(0)
+  timeoutMs  Int              @default(30000)
+  createdAt  DateTime         @default(now())
+
+  credentials ProviderCredential[]
+  models      AIModel[]
+  health      ProviderHealth?
+}
+
+model ProviderCredential {
+  id           String   @id @default(uuid()) @db.Uuid
+  providerId   String   @db.Uuid
+  provider     Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  userId       String?  @db.Uuid
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  encryptedKey String   @db.Text
+  keyHint      String
+  createdAt    DateTime @default(now())
+  rotatedAt    DateTime?
+}
+
+model AIModel {
+  id               String   @id @default(uuid()) @db.Uuid
+  providerId       String   @db.Uuid
+  provider         Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  modelId          String
+  displayName      String
+  contextWindow    Int
+  maxOutputTokens  Int
+  supportsStreaming Boolean @default(true)
+  supportsTools    Boolean  @default(false)
+  supportsVision   Boolean  @default(false)
+  supportsReasoning Boolean @default(false)
+  enabled          Boolean  @default(true)
+  pricing          ModelPricing[]
+
+  @@unique([providerId, modelId])
+}
+
+model ModelPricing {
+  id                String   @id @default(uuid()) @db.Uuid
+  modelId           String   @db.Uuid
+  model             AIModel  @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  inputPricePer1M   Decimal  @db.Decimal(12, 6)
+  outputPricePer1M  Decimal  @db.Decimal(12, 6)
+  currency          String   @default("USD")
+  effectiveFrom     DateTime @default(now())
+  effectiveTo       DateTime?
+}
+
+model ApiKey {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  keyHash     String
+  keyPrefix   String    @db.VarChar(12)
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  restrictions Json?
+  createdAt   DateTime  @default(now())
+
+  usage UsageRecord[]
+
+  @@index([userId])
+  @@index([keyHash])
+}
+
+model RoutingProfile {
+  id                  String      @id @default(uuid()) @db.Uuid
+  userId              String      @db.Uuid
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                String
+  mode                RoutingMode @default(AUTOMATIC)
+  defaultProviderId   String?     @db.Uuid
+  defaultModelId      String?     @db.Uuid
+  // Ordered per-task chains: Record<TaskCategory, Array<{provider, model}>>
+  // (see packages/shared). Agent 3 reads/writes this.
+  taskMapping         Json
+  preferredProviderId String?     @db.Uuid
+  excludedModelIds    Json        @default("[]")
+  fallbackModelIds    Json        @default("[]")
+  budgetDailyCredits  Decimal?    @db.Decimal(12, 2)
+  isDefault           Boolean     @default(false)
+
+  rules         RoutingRule[]
+  fallbackRules FallbackRule[]
+
+  @@index([userId])
+}
+
+model RoutingRule {
+  id           String         @id @default(uuid()) @db.Uuid
+  profileId    String         @db.Uuid
+  profile      RoutingProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  taskCategory String
+  providerId   String?        @db.Uuid
+  modelId      String?        @db.Uuid
+  priority     Int            @default(0)
+}
+
+model FallbackRule {
+  id          String         @id @default(uuid()) @db.Uuid
+  userId      String?        @db.Uuid
+  user        User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileId   String?        @db.Uuid
+  profile     RoutingProfile? @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  fromModelId String?        @db.Uuid
+  toModelId   String         @db.Uuid
+  trigger     FallbackTrigger
+  order       Int            @default(0)
+}
+
+model UsageRecord {
+  id             String      @id @default(uuid()) @db.Uuid
+  userId         String      @db.Uuid
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKeyId       String?     @db.Uuid
+  apiKey         ApiKey?     @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  requestId      String      @unique
+  provider       String
+  model          String
+  routingMode    RoutingMode
+  taskCategory   String?
+  inputTokens    Int         @default(0)
+  outputTokens   Int         @default(0)
+  cachedTokens   Int         @default(0)
+  // RTK-style token saving inside the gateway (CONTRACT refinement 1).
+  tokensSaved    Int         @default(0)
+  estimatedCost  Decimal     @db.Decimal(12, 6) @default(0)
+  platformCharge Decimal     @db.Decimal(12, 6) @default(0)
+  latencyMs      Int         @default(0)
+  status         UsageStatus @default(SUCCESS)
+  createdAt      DateTime    @default(now())
+
+  @@index([userId, createdAt])
+  @@index([provider, model])
+}
+
+model CreditWallet {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance   Decimal  @db.Decimal(12, 2) @default(0)
+  currency  String   @default("BDT")
+  transactions CreditTransaction[]
+}
+
+model CreditTransaction {
+  id             String                @id @default(uuid()) @db.Uuid
+  walletId       String                @db.Uuid
+  wallet         CreditWallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount         Decimal               @db.Decimal(12, 2)
+  type           CreditTransactionType
+  idempotencyKey String                @unique
+  requestId      String?
+  description    String?
+  createdAt      DateTime              @default(now())
+
+  @@index([walletId, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @db.Uuid
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  resource   String
+  resourceId String?
+  meta       Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([resource, createdAt])
+}
+
+model ProviderHealth {
+  id                  String               @id @default(uuid()) @db.Uuid
+  providerId          String               @unique @db.Uuid
+  provider            Provider             @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  status              ProviderHealthStatus @default(UP)
+  lastLatencyMs       Int?
+  lastErrorRate       Float?
+  lastCheckedAt       DateTime             @default(now())
+  consecutiveFailures Int                  @default(0)
+  cooldownUntil       DateTime?
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique
+  value     Json
+  updatedBy String?
+}
