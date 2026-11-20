@@ -2,7 +2,7 @@
 // Rough estimate (~4 chars/token) used only when a provider omits usage
 // or when RTK needs a cheap pre-flight size check. Never billed on this.
 
-import type { ChatMessage } from '../../shared/src/index.js';
+import type { ChatMessage } from '@jhinuk-ai-router/shared';
 
 export function estimateTokens(text: string): number {
   return Math.max(0, Math.ceil(text.length / 4));
