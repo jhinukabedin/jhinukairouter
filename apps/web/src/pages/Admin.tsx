@@ -24,6 +24,9 @@ export default function Admin() {
   const [settings, setSettings] = useState<SystemSetting[]>([]);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [providerHealth, setProviderHealth] = useState<ProviderHealthItem[]>([]);
+  // Effective registration flag (DB setting wins over the env var). The
+  // toggle below flips it; null while loading.
+  const [regEnabled, setRegEnabled] = useState<boolean | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -35,18 +38,20 @@ export default function Admin() {
     setLoading(true);
     setError('');
     try {
-      const [u, l, s, h, ph] = await Promise.all([
+      const [u, l, s, h, ph, r] = await Promise.all([
         api.adminUsers().catch(() => [] as (User & { roles?: string[] })[]),
         api.auditLogs({ page: '1', limit: '50' }).catch(() => [] as AuditLog[]),
         api.systemSettings().catch(() => [] as SystemSetting[]),
         api.health().catch(() => null),
         api.providerHealth().catch(() => [] as ProviderHealthItem[]),
+        api.registrationStatus().catch(() => null),
       ]);
       setUsers(u);
       setLogs(normalizePaged<AuditLog>(l).data);
       setSettings(s);
       setHealth(h);
       setProviderHealth(ph);
+      setRegEnabled(r ? r.registrationEnabled : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load admin data.');
     } finally {
@@ -185,7 +190,36 @@ export default function Admin() {
       )}
 
       {tab === 'settings' && (
-        <Card>
+        <>
+          <Card>
+            <CardHeader title="Registration" sub="Allow new accounts to sign up. Turn it off to close registration — turn it back on here any time. Takes effect immediately, no restart needed." />
+            <CardBody>
+              <label className="flex cursor-pointer items-center gap-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={regEnabled ?? false}
+                  disabled={regEnabled === null}
+                  onChange={async (e) => {
+                    const next = e.target.checked;
+                    setRegEnabled(next);
+                    setMsg('');
+                    try {
+                      await api.updateSystemSetting('registration.enabled', next);
+                      setMsg(`Registration ${next ? 'turned ON' : 'turned OFF'}.`);
+                      await load();
+                    } catch (err) {
+                      setMsg(err instanceof Error ? err.message : 'Could not save the setting.');
+                      await load();
+                    }
+                  }}
+                  className="h-5 w-5 accent-indigo-600"
+                />
+                <span>{regEnabled === null ? 'Loading…' : regEnabled ? 'Registration is ON — anyone can create an account.' : 'Registration is OFF — no new accounts can be created.'}</span>
+              </label>
+              <p className="mt-2 text-xs text-slate-500">Stored as the <code className="font-mono">registration.enabled</code> system setting — it overrides the server&apos;s REGISTRATION_ENABLED env var. Admins can also create accounts directly from the Users tab above.</p>
+            </CardBody>
+          </Card>
+          <Card>
           <CardHeader title="System Settings" sub="Key/value settings (JSON). Edit the value and save — the API stores it." />
           {settings.length === 0 ? <CardBody><EmptyState>No system settings returned.</EmptyState></CardBody> : (
             <Table headers={['Key', 'Value', '']}>
@@ -208,9 +242,10 @@ export default function Admin() {
             </Table>
           )}
           <CardBody>
-            <p className="text-sm text-slate-500">Known keys include <code className="font-mono text-xs">allowLocalProviders</code> (true = allow localhost/private provider base URLs — admin only, SSRF guard off for those) and registration flags. Unknown keys are shown as returned by the API.</p>
+            <p className="text-sm text-slate-500">Known keys include <code className="font-mono text-xs">allowLocalProviders</code> (true = allow localhost/private provider base URLs — admin only, SSRF guard off for those) and <code className="font-mono text-xs">registration.enabled</code> (true/false — controls sign-ups; the toggle above edits this key). Unknown keys are shown as returned by the API.</p>
           </CardBody>
-        </Card>
+          </Card>
+        </>
       )}
 
       {tab === 'health' && (
