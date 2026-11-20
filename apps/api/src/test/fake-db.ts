@@ -124,7 +124,14 @@ export class FakeDb implements Db {
   };
 
   userSession = {
-    findUnique: async ({ where }: { where: { id?: string; tokenHash?: string } }): Promise<SessionRow | null> =>
+    // Mirrors real Prisma: findUnique throws when the field is not a unique
+    // constraint. tokenHash is only @@index in the schema, so production
+    // must never call findUnique with it — use findFirst instead.
+    findUnique: async ({ where }: { where: { id?: string; tokenHash?: string } }): Promise<SessionRow | null> => {
+      if (where.tokenHash !== undefined) throw new Error('findUnique on non-unique field tokenHash');
+      return this.sessions.find((s) => (where.id ? s.id === where.id : true)) ?? null;
+    },
+    findFirst: async ({ where }: { where: { id?: string; tokenHash?: string } }): Promise<SessionRow | null> =>
       this.sessions.find((s) => (where.id ? s.id === where.id : true) && (where.tokenHash ? s.tokenHash === where.tokenHash : true)) ?? null,
     findMany: async ({ where }: { where: { userId: string } }) => this.sessions.filter((s) => s.userId === where.userId),
     create: async ({ data }: { data: { userId: string; tokenHash: string; userAgent?: string | null; ip?: string | null; expiresAt: Date } }): Promise<SessionRow> => {
