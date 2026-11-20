@@ -12,6 +12,8 @@ import { rolesRoutes } from './modules/roles/index.js';
 import { apiKeysRoutes } from './modules/api-keys/index.js';
 import { adminRoutes } from './modules/admin/index.js';
 import { healthRoutes } from './modules/health/index.js';
+import { staticRoutes } from './modules/static/index.js';
+import { registerAllModules } from './modules/wiring.js';
 
 export interface BuildAppOptions {
   env: Env;
@@ -64,6 +66,15 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   await fastify.register(rolesRoutes, { db });
   await fastify.register(apiKeysRoutes, { db });
   await fastify.register(adminRoutes, { db });
+
+  // Dashboard (providers/models/routing/usage/billing) + /v1 gateway.
+  // Must come before the static fallback so API routes win over it.
+  await registerAllModules(fastify, { db });
+
+  // Dashboard SPA (served from ./public when present — see
+  // modules/static). Registered after the API routes so /v1, /api and
+  // /health always win over the SPA fallback.
+  await fastify.register(staticRoutes, { publicDir: env.PUBLIC_DIR ?? 'public' });
 
   // 404 for unknown routes (JSON, not HTML).
   fastify.setNotFoundHandler((_request, reply) => {
