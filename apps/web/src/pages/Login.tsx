@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, setToken, ApiError } from '../lib/api';
 import { Alert, Button, Field, TextInput } from '../components/forms';
 
@@ -8,6 +8,13 @@ export default function Login() {
   const [totpCode, setTotpCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Hide the sign-up link when the admin has turned registration off.
+  // Default true (link shown) while the status loads or if it can't load.
+  const [registrationEnabled, setRegistrationEnabled] = useState(true);
+
+  useEffect(() => {
+    api.registrationStatus().then((s) => setRegistrationEnabled(s.registrationEnabled)).catch(() => undefined);
+  }, []);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,7 +44,7 @@ export default function Login() {
           <TextInput value={totpCode} onChange={(e) => setTotpCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
         </Field>
         <Button type="submit" disabled={busy} className="w-full">{busy ? 'Signing in…' : 'Sign in'}</Button>
-        <p className="text-sm text-slate-500">No account? <a href="#/register" className="text-indigo-600">Register</a></p>
+        {registrationEnabled && <p className="text-sm text-slate-500">No account? <a href="#/register" className="text-indigo-600">Register</a></p>}
       </form>
     </div>
   );
