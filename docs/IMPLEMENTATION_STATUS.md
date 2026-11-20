@@ -270,3 +270,64 @@ on/off should be controllable from the admin dashboard instead of an env var.
   protocol) → Test → Sync Models. The Tokens.bd key itself was verified
   good on 20 Nov via the custom.tokens-bd connector (47 models incl.
   openai/gpt-6-luna); the 401 was never a bad key.
+
+## 0.1.4 — 20 Nov ~21:20 (fixes the live Test/Sync "Internal server error")
+
+- **Symptom:** provider Tokensbd saved fine and the Providers page loaded,
+  but Test and Sync Models both alerted "Internal server error".
+- **Root cause (reproduced locally):** the dashboard POSTs /test and
+  /sync-models with NO body, but the web client always sent
+  `Content-Type: application/json`. Fastify's JSON parser rejects an empty
+  body (`FST_ERR_CTP_EMPTY_JSON_BODY`, a 400), and `app.ts`'s custom error
+  handler only recognised AppError and `validation` errors — every other
+  error became a 500. So Create (sends a body) worked while every
+  body-less POST (Test, Sync Models, logout, suspend/activate, DELETEs)
+  500'd. The provider call itself was never the problem: the adapter's
+  testConnection returns false on provider failure, and listModels throws
+  a catchable ProviderHttpError (verified with a dummy key: 401 "Invalid
+  API key." from tokens.bd, no Cloudflare block on the adapter's fetch).
+- **Fix, two layers:** (1) `apps/api/src/app.ts` — the error handler now
+  honours Fastify's own 4xx `statusCode` (code + message, truncated)
+  instead of masking client mistakes as 500. (2) `apps/web/src/lib/api.ts`
+  — `request()` only sends `Content-Type: application/json` when a body
+  is actually present, so a body-less POST never hits the parser.
+- **Full-page audit (same release, user's voice request 21:21):** every
+  dashboard page's API calls were checked against the API's real return
+  shapes. Three more "nothing shows up" bugs found, all in
+  `apps/web/src/lib/api.ts`:
+  (1) Usage list and credit transactions answer `{ rows, total, ... }`,
+  but `normalizePaged` only read `data`/`items`/`logs` — so the Usage
+  page, Request Logs, Overview's recent list and the Credits transaction
+  list always showed empty. `normalizePaged` now also accepts `rows`.
+  (2) `wallet()` called GET `/api/v1/credits`, which has no route — the
+  API only serves `/api/v1/credits/wallet`, so the wallet card on
+  Overview/Credits always 404'd. Now calls `/api/v1/credits/wallet`.
+  (3) `adjustCredits` sent `{ userId, amount }` but the API requires
+  `{ targetUserId, amount, idempotencyKey }` — every admin credit adjust
+  400'd. The client now maps the id and mints an idempotency key per
+  submission. Pages checked clean: Models (create/update returns
+  ignored, page reloads), Routing Profiles (bare profile/fallback-rule
+  shapes), Client Setup (gateway URL is `…/v1`, test fetches
+  `/v1/models` correctly), Settings (TOTP page only reads `secret`;
+  sessions DELETE returns `{ok:true}`), Admin (suspend/activate
+  `{ok:true}`, update returns bare user). Known gaps NOT fixed here:
+  `/api/v1/admin/provider-health` still has no API route (Admin page
+  catches and shows []), and Usage pagination sends `page` which the
+  API ignores (limit/offset only) — first page works.
+- **Tests:** new `apps/api/src/modules/providers/empty-body.test.ts` (2):
+  empty body + JSON content-type now answers 400 with
+  `FST_ERR_CTP_EMPTY_JSON_BODY` (not 500); body-less POST without a
+  content-type reaches the handler (Test 200 ok:false with a dummy key,
+  Sync 502 "sync failed"). The repro was written red first (both 500),
+  then turned green by the fix. Plus one `{ rows }` case in the web
+  `api-shape` test. Tests now **141**: root 72/72, apps/api 58/58
+  (was 56), apps/web 11/11 (was 10). Typecheck clean, API + web builds
+  pass, smoke test on the built server: / 200, /health ok v0.1.4,
+  registration-status true (smoke env), /v1/models 401.
+- Version bumped to 0.1.4 (root + api package.json, health string, workflow
+  tags, DEPLOYMENT.md). Deploy = push → Actions build → GHCR 0.1.4 →
+  BHPanel recreate container (same env vars). **After deploy the
+  in-memory providers/models are wiped again — the user must re-add the
+  Tokensbd provider (OpenAI-compatible protocol, 20:10 key
+  tok_live_9aa7744b…), then Test (expect "Connection OK") then Sync
+  Models. Usage/Logs/Credits pages will also show rows now.**
