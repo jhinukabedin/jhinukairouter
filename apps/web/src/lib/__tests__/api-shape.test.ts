@@ -14,6 +14,16 @@ describe('api response shapes', () => {
     expect(normalizePaged(null).data).toEqual([]);
   });
 
+  it('normalizePaged unwraps { rows } (usage list + credit transactions, 0.1.4)', () => {
+    // GET /api/v1/usage and /api/v1/credits/transactions answer
+    // { rows, total, ... }; without this the Usage, Request Logs,
+    // Overview-recent and Credits pages always showed empty.
+    const usage = normalizePaged({ rows: [{ id: 'u1' }], total: 1, limit: 50, offset: 0 });
+    expect(usage.data).toEqual([{ id: 'u1' }]);
+    expect(usage.total).toBe(1);
+    expect(normalizePaged({ rows: [] }).data).toEqual([]);
+  });
+
   it('unwrapData returns the wrapped value and passes bare values through', () => {
     expect(unwrapData({ data: { id: 'p1' } })).toEqual({ id: 'p1' });
     expect(unwrapData({ id: 'p2' })).toEqual({ id: 'p2' });
