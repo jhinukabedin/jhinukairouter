@@ -7,7 +7,7 @@
 import type {
   NormalizedChatRequest,
   NormalizedChatResponse,
-} from '../../shared/src/index.js';
+} from '@jhinuk-ai-router/shared';
 
 export { validateBaseUrl } from './ssrf.js';
 export type { BaseUrlCheck } from './ssrf.js';
