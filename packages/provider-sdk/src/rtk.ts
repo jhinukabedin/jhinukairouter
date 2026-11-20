@@ -8,7 +8,7 @@
 // its base URL; the router then applies the optimisation below once, on
 // the server side. Do not add a proxy layer between OpenCode and Tokens.
 
-import type { ChatMessage, NormalizedChatRequest } from '../../shared/src/index.js';
+import type { ChatMessage, NormalizedChatRequest } from '@jhinuk-ai-router/shared';
 import { estimateTokens } from './tokens.js';
 
 export interface RtkOptions {
