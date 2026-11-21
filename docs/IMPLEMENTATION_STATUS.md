@@ -384,3 +384,42 @@ but /v1 only accepts router API keys (always 401).
   BHPanel container update (same env vars). After deploy the user
   re-adds the Tokensbd provider (still not added) and logs in fresh —
   Overview must render with the stats cards and empty breakdowns.
+
+**0.1.5 LIVE 21 Nov ~11:32** — container updated in place to GHCR 0.1.5
+(Actions run 44870994314 SUCCESS, workflow tag commit dbedf46, code HEAD
+fbfd07d8, sync record 34 entries). Verified live: / 200, /health ok v0.1.5,
+database up, registration closed, /v1/models 401. The blank page after
+login is fixed by the client-side summary normalisation; the user logs in
+fresh and Overview renders. Providers/models were wiped by the restart as
+expected — user still has to add the Tokensbd provider (not added yet).
+
+## 0.1.6 — 21 Nov (OpenRouter sync: free models only)
+
+- **Ask (user, 21 Nov 12:04):** "openrouter er sob model sync hoyeche ami
+  chai shudhu free gulo" — the OpenRouter sync pulled the whole catalog
+  (hundreds of paid models); he wants only the free ones.
+- **Fix:** providers gain a `freeOnly` flag (schema + create + PATCH;
+  `toPublic` already spreads the whole record, so list responses carry
+  it). When `freeOnly` is on for an OpenRouter provider (type
+  `openrouter` or baseUrl containing `openrouter.ai`), sync keeps only
+  model ids ending in `:free` — OpenRouter's free-tier marker — and
+  prunes paid models synced earlier (only when the filtered sync
+  returned models, so an empty provider answer can never wipe the
+  list). The flag is ignored for other providers (their ids never carry
+  the suffix; filtering them would sync zero models). The sync response
+  gains `pruned`. Dashboard: the Add-provider form shows an "Only sync
+  free models (:free)" checkbox for OpenRouter, and each OpenRouter row
+  has a "Free only: On/Off" toggle (there is no edit form, so the
+  existing provider gets the flag this way); the sync alert reports the
+  pruned count.
+- **Tests:** new `apps/api/src/modules/providers/free-only.test.ts` (3,
+  fetch stubbed with a mixed OpenRouter catalog): sync-all then
+  PATCH freeOnly + re-sync prunes the 2 paid models; freeOnly at
+  creation syncs only the 2 `:free` models; the flag is ignored for a
+  Tokens provider. Tests now **149**: root 72/72, apps/api 61/61 (was
+  58), apps/web 16/16.
+- Version bumped to 0.1.6 (root + api package.json, health string, workflow
+  tags, DEPLOYMENT.md). Deploy = push -> Actions build -> GHCR 0.1.6 ->
+  BHPanel container update (same env vars). After deploy the user
+  re-adds the providers (in-memory wipe) — Tokens.bd as before, and
+  OpenRouter with the free-only box ticked (or the row toggle + Sync).
