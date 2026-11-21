@@ -55,6 +55,8 @@ const createProviderSchema = z.object({
   ownerId: z.string().nullable().optional(),
   priority: z.number().int().min(0).max(1000).default(0),
   timeoutMs: z.number().int().min(1000).max(300_000).default(30_000),
+  /** Sync only free models (OpenRouter: ids ending in `:free`). */
+  freeOnly: z.boolean().default(false),
   /** Write-only API key for the provider. Never returned by any route.
    *  `apiKey` is accepted as an alias (dashboard docs use that name). */
   credential: z.string().min(1).max(2000).optional(),
@@ -151,6 +153,7 @@ export function registerProviderRoutes(app: FastifyInstance, deps: ProviderModul
       ownerId: data.ownerId ?? null,
       priority: data.priority,
       timeoutMs: data.timeoutMs,
+      freeOnly: data.freeOnly,
       keyHint,
     });
     if (credential) await deps.providers.setCredential(record.id, credential);
@@ -180,6 +183,7 @@ export function registerProviderRoutes(app: FastifyInstance, deps: ProviderModul
     if (data.ownerId !== undefined) patch.ownerId = data.ownerId;
     if (data.priority !== undefined) patch.priority = data.priority;
     if (data.timeoutMs !== undefined) patch.timeoutMs = data.timeoutMs;
+    if (data.freeOnly !== undefined) patch.freeOnly = data.freeOnly;
 
     const nextType = patch.type ?? existing.type;
     if (data.baseUrl !== undefined || patch.type !== undefined) {
@@ -270,6 +274,13 @@ export function registerProviderRoutes(app: FastifyInstance, deps: ProviderModul
         },
       });
     }
+    // Free-only providers (OpenRouter: ids ending in `:free`) keep just the
+    // free models. OpenRouter's catalog is hundreds of paid models; syncing
+    // all of them drowns the pickers and invites paid usage by accident.
+    const isOpenRouter = record.type === 'openrouter' || record.baseUrl.includes('openrouter.ai');
+    if (record.freeOnly && isOpenRouter) {
+      modelIds = modelIds.filter((m) => m.endsWith(':free'));
+    }
     const synced: Array<Record<string, unknown>> = [];
     for (const modelId of modelIds) {
       const existing = await deps.models.getByProviderAndModel(id, modelId);
@@ -291,6 +302,17 @@ export function registerProviderRoutes(app: FastifyInstance, deps: ProviderModul
       });
       synced.push({ ...created });
     }
-    return { data: { synced: synced.length, models: synced } };
+    // Prune models the filter excludes (e.g. paid ones synced before the
+    // flag was turned on). Only when the filtered sync actually returned
+    // models — an empty provider answer must never wipe the list.
+    let pruned = 0;
+    if (record.freeOnly && isOpenRouter && synced.length > 0) {
+      for (const m of await deps.models.list({ providerId: id })) {
+        if (!m.modelId.endsWith(':free')) {
+          if (await deps.models.delete(m.id)) pruned += 1;
+        }
+      }
+    }
+    return { data: { synced: synced.length, models: synced, pruned } };
   });
 }
