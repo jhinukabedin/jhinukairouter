@@ -33,6 +33,14 @@ export default function RoutingProfiles() {
   const [testResult, setTestResult] = useState('');
   const [testing, setTesting] = useState('');
   const [newName, setNewName] = useState('');
+  // The gateway only accepts router API keys, not the dashboard session
+  // token (0.1.5: Test always 401'd before this). Kept in this browser only.
+  const [routerKey, setRouterKey] = useState(() => localStorage.getItem('jar_router_test_key') ?? '');
+  const saveRouterKey = (k: string) => {
+    setRouterKey(k);
+    if (k) localStorage.setItem('jar_router_test_key', k);
+    else localStorage.removeItem('jar_router_test_key');
+  };
 
   const active = profiles.find((p) => p.id === activeId) ?? null;
 
@@ -120,10 +128,15 @@ export default function RoutingProfiles() {
     const key = `${task}:${entry.provider}/${entry.model}`;
     setTesting(key);
     setTestResult('');
+    if (!routerKey.trim()) {
+      setTestResult('✗ Paste a router API key below first (create one on the API Keys page) — the gateway does not accept the dashboard login for tests.');
+      setTesting('');
+      return;
+    }
     try {
       // Test via the gateway using the alias-free model ref; the router resolves
       // the chain and reports which model actually served the request.
-      const r = await testGatewayChat(`${entry.provider}/${entry.model}`);
+      const r = await testGatewayChat(`${entry.provider}/${entry.model}`, routerKey.trim());
       setTestResult(`✓ ${entry.provider}/${entry.model} answered via ${r.provider}/${r.model}: “${r.content.trim().slice(0, 120)}”`);
     } catch (e) {
       setTestResult(`✗ Test failed for ${entry.provider}/${entry.model}: ${e instanceof Error ? e.message : 'unknown error'}`);
@@ -138,9 +151,14 @@ export default function RoutingProfiles() {
     const key = `${task}:chain`;
     setTesting(key);
     setTestResult('');
+    if (!routerKey.trim()) {
+      setTestResult('✗ Paste a router API key below first (create one on the API Keys page) — the gateway does not accept the dashboard login for tests.');
+      setTesting('');
+      return;
+    }
     try {
       const first = chain[0];
-      const r = await testGatewayChat(`${first.provider}/${first.model}`);
+      const r = await testGatewayChat(`${first.provider}/${first.model}`, routerKey.trim());
       setTestResult(`✓ Chain for ${task} served by ${r.provider}/${r.model} (first available in chain). Full fallback (429/5xx/timeout) is exercised by the gateway, not the dashboard.`);
     } catch (e) {
       setTestResult(`✗ Chain test failed: ${e instanceof Error ? e.message : 'unknown error'}`);
@@ -156,6 +174,17 @@ export default function RoutingProfiles() {
       {error && <ApiDownNote error={error} />}
       {msg && <Alert kind={msg.startsWith('✓') || msg.includes('saved') ? 'success' : 'info'}>{msg}</Alert>}
       {testResult && <Alert kind={testResult.startsWith('✓') ? 'success' : 'error'}>{testResult}</Alert>}
+
+      <Card>
+        <CardBody>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Router API key (for Test buttons)">
+              <TextInput type="password" value={routerKey} onChange={(e) => saveRouterKey(e.target.value)} placeholder="rk_live_…" autoComplete="off" />
+            </Field>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">The gateway only accepts router API keys, not your dashboard login. Create one on the API Keys page and paste it here — it stays in this browser only.</p>
+        </CardBody>
+      </Card>
 
       <Card>
         <CardBody>
