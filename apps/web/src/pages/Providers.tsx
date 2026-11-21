@@ -9,7 +9,7 @@ import { Alert, ApiDownNote, Button, Checkbox, EmptyState, Field, Select, Spinne
 
 interface FormState {
   name: string; type: string; baseUrl: string; protocol: 'openai' | 'anthropic';
-  apiKey: string; priority: number; timeoutMs: number; enabled: boolean;
+  apiKey: string; priority: number; timeoutMs: number; enabled: boolean; freeOnly: boolean;
 }
 
 export default function Providers() {
@@ -19,7 +19,7 @@ export default function Providers() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<FormState>({
     name: '', type: 'tokens', baseUrl: 'https://tokens.bd/v1', protocol: 'openai',
-    apiKey: '', priority: 100, timeoutMs: 30000, enabled: true,
+    apiKey: '', priority: 100, timeoutMs: 30000, enabled: true, freeOnly: false,
   });
   const [formMsg, setFormMsg] = useState('');
   const [formErr, setFormErr] = useState('');
@@ -52,6 +52,7 @@ export default function Providers() {
       const created = await api.createProvider({
         name: form.name, type: form.type, baseUrl: form.baseUrl, protocol: form.protocol,
         apiKey: form.apiKey || undefined, priority: form.priority, timeoutMs: form.timeoutMs, enabled: form.enabled,
+        freeOnly: form.freeOnly,
       });
       setFormMsg(`Provider "${created.name}" added. Test the connection, then Sync Models — the models will appear in Routing Profiles and GET /v1/models with no redeploy.`);
       setForm((f) => ({ ...f, apiKey: '' }));
@@ -74,9 +75,18 @@ export default function Providers() {
   const sync = async (p: Provider) => {
     try {
       const r = await api.syncProviderModels(p.id);
-      alert(`Synced ${r.synced} model(s)${r.models?.length ? `: ${r.models.join(', ')}` : ''}. They now appear in Routing Profiles pickers.`);
+      alert(`Synced ${r.synced} model(s)${r.models?.length ? `: ${r.models.join(', ')}` : ''}${r.pruned ? ` — removed ${r.pruned} paid model(s).` : ''} They now appear in Routing Profiles pickers.`);
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Sync failed.');
+    }
+  };
+  const isOpenRouter = (p: Provider) => p.type === 'openrouter' || p.baseUrl.includes('openrouter.ai');
+  const toggleFreeOnly = async (p: Provider) => {
+    try {
+      await api.updateProvider(p.id, { freeOnly: !p.freeOnly });
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not change free-only.');
     }
   };
 
@@ -96,7 +106,7 @@ export default function Providers() {
             {providers.map((p) => (
               <tr key={p.id} className="border-b border-slate-100 dark:border-slate-800">
                 <Td>{p.name}{p.isGlobal ? ' (global)' : ''}</Td>
-                <Td>{p.type}</Td>
+                <Td>{p.type}{p.freeOnly ? ' · free only' : ''}</Td>
                 <Td className="max-w-56 truncate font-mono text-xs">{p.baseUrl}</Td>
                 <Td>{p.protocol}</Td>
                 <Td>{p.priority}</Td>
@@ -105,6 +115,11 @@ export default function Providers() {
                   <div className="flex gap-1">
                     <Button variant="secondary" onClick={() => void test(p)}>Test</Button>
                     <Button variant="secondary" onClick={() => void sync(p)}>Sync models</Button>
+                    {isOpenRouter(p) && (
+                      <Button variant="secondary" onClick={() => void toggleFreeOnly(p)}>
+                        {p.freeOnly ? 'Free only: On' : 'Free only: Off'}
+                      </Button>
+                    )}
                     <Button variant="danger" onClick={() => { if (confirm(`Delete provider ${p.name}?`)) void api.deleteProvider(p.id).then(load); }}>Delete</Button>
                   </div>
                 </Td>
@@ -142,6 +157,9 @@ export default function Providers() {
               <Field label="Timeout (ms)"><TextInput type="number" value={form.timeoutMs} onChange={(e) => setForm({ ...form, timeoutMs: Number(e.target.value) })} /></Field>
             </div>
             <Checkbox label="Enabled" checked={form.enabled} onChange={(v) => setForm({ ...form, enabled: v })} />
+            {(form.type === 'openrouter' || form.baseUrl.includes('openrouter.ai')) && (
+              <Checkbox label="Only sync free models (:free) — paid ones are not synced, and already-synced paid ones are removed on the next Sync" checked={form.freeOnly} onChange={(v) => setForm({ ...form, freeOnly: v })} />
+            )}
             <div className="flex gap-2">
               <Button type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add provider'}</Button>
               <Button variant="secondary" onClick={() => setShowForm(false)}>Close</Button>
