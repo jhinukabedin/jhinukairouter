@@ -150,9 +150,64 @@ export interface Paged<T> { data: T[]; total: number; page: number; limit: numbe
 
 export function normalizePaged<T>(body: unknown): Paged<T> {
   if (Array.isArray(body)) return { data: body as T[], total: body.length, page: 1, limit: body.length };
-  const b = (body ?? {}) as { data?: T[]; items?: T[]; logs?: T[]; rows?: T[]; total?: number; page?: number; limit?: number };
+  const b = (body ?? {}) as { data?: T[]; items?: T[]; logs?: T[]; rows?: T[]; total?: number; page?: number; limit?: number; offset?: number };
   const data = b.data ?? b.items ?? b.logs ?? b.rows ?? [];
-  return { data, total: b.total ?? data.length, page: b.page ?? 1, limit: b.limit ?? data.length };
+  // The usage/credits APIs answer limit/offset, not page — derive the page
+  // from them (0.1.5: the pager always showed page 1 before this).
+  const page = b.page ?? (typeof b.offset === 'number' && b.limit ? Math.floor(b.offset / b.limit) + 1 : 1);
+  return { data, total: b.total ?? data.length, page, limit: b.limit ?? data.length };
+}
+
+/**
+ * The usage/credits APIs accept limit/offset only — a `page` query param is
+ * silently stripped, so every page showed the first rows (0.1.5). Translate
+ * page -> offset here so the pages can keep passing page/limit.
+ */
+export function withOffset(params: Record<string, string>): Record<string, string> {
+  const { page, ...rest } = params;
+  if (page === undefined) return params;
+  const limit = Number(params.limit ?? 50) || 50;
+  const offset = (Math.max(1, Number(page) || 1) - 1) * limit;
+  return { ...rest, limit: String(limit), offset: String(offset) };
+}
+
+/** Sync returns model objects; the pages want id strings (0.1.5: the alert showed "[object Object]"). */
+export function toModelIds(models: unknown): string[] {
+  if (!Array.isArray(models)) return [];
+  return models
+    .map((m) => (typeof m === 'string' ? m : (m as { modelId?: unknown; id?: unknown })?.modelId ?? (m as { id?: unknown })?.id ?? ''))
+    .filter((s): s is string => typeof s === 'string' && s.length > 0);
+}
+
+type SummaryBucket = { requests: number; inputTokens: number; outputTokens: number; estimatedCost: number };
+const bucketToRow = <K extends string>(keyName: K, rec: Record<string, SummaryBucket> | unknown[]) =>
+  (Array.isArray(rec)
+    ? (rec as ({ estimatedCost?: number; cost?: number } & Record<string, unknown>)[]).map((r) => ({ ...r, cost: r.cost ?? r.estimatedCost ?? 0 }))
+    : Object.entries(rec ?? {}).map(([key, b]) => ({ [keyName]: key, requests: b.requests ?? 0, inputTokens: b.inputTokens ?? 0, outputTokens: b.outputTokens ?? 0, cost: b.estimatedCost ?? 0 })));
+
+/**
+ * The usage summary API returns breakdowns as RECORDS keyed by model/provider/
+ * key/user id, with `estimatedProviderCost` / `platformCreditUsed` at the top
+ * and `estimatedCost` inside the buckets — but the pages read ARRAYS with a
+ * `cost` field and `estimatedCost` / `platformCharge` at the top. Overview
+ * called `.map` on the record and the whole dashboard went blank on login
+ * (0.1.5). Normalise the wire shape into the page shape here, accepting
+ * either form so a future API change does not blank the page again.
+ */
+export function normalizeUsageSummary(body: unknown): UsageSummary {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const day = (v: unknown) =>
+    (Array.isArray(v) ? v : []).map((d) => ({ ...(d as object), cost: (d as { cost?: number; estimatedCost?: number }).cost ?? (d as { estimatedCost?: number }).estimatedCost ?? 0 }));
+  return {
+    ...(b as unknown as UsageSummary),
+    estimatedCost: (b.estimatedCost as number) ?? (b.estimatedProviderCost as number) ?? 0,
+    platformCharge: (b.platformCharge as number) ?? (b.platformCreditUsed as number) ?? 0,
+    byModel: bucketToRow('model', b.byModel as Record<string, SummaryBucket>) as UsageSummary['byModel'],
+    byProvider: bucketToRow('provider', b.byProvider as Record<string, SummaryBucket>) as UsageSummary['byProvider'],
+    byApiKey: bucketToRow('apiKeyId', b.byApiKey as Record<string, SummaryBucket>) as UsageSummary['byApiKey'],
+    byUser: bucketToRow('userId', b.byUser as Record<string, SummaryBucket>) as UsageSummary['byUser'],
+    daily: day(b.daily) as UsageSummary['daily'],
+  };
 }
 
 /** Single-object endpoints wrap the value as { data: ... }; pass bare values through. */
@@ -197,7 +252,10 @@ export const api = {
     patch(`/api/v1/providers/${id}`, data).then((b) => unwrapData<Provider>(b)),
   deleteProvider: (id: string) => del(`/api/v1/providers/${id}`),
   testProvider: (id: string) => post(`/api/v1/providers/${id}/test`).then((b) => unwrapData<{ ok: boolean; latencyMs?: number; error?: string }>(b)),
-  syncProviderModels: (id: string) => post(`/api/v1/providers/${id}/sync-models`).then((b) => unwrapData<{ synced: number; models: string[] }>(b)),
+  syncProviderModels: (id: string) => post(`/api/v1/providers/${id}/sync-models`).then((b) => {
+    const d = unwrapData<{ synced: number; models: unknown }>(b);
+    return { synced: d.synced ?? 0, models: toModelIds(d.models) };
+  }),
 
   // --------------------------------------------------------------- models
   listModels: () => get('/api/v1/models').then((b) => normalizePaged<AIModel>(b).data),
@@ -228,16 +286,16 @@ export const api = {
 
   // ------------------------------------------------------------ usage/billing
   usageSummary: (params: Record<string, string>) => {
-    const q = new URLSearchParams(params).toString();
-    return get<UsageSummary>(`/api/v1/usage/summary${q ? `?${q}` : ''}`);
+    const q = new URLSearchParams(withOffset(params)).toString();
+    return get<UsageSummary>(`/api/v1/usage/summary${q ? `?${q}` : ''}`).then(normalizeUsageSummary);
   },
   usageList: (params: Record<string, string>) => {
-    const q = new URLSearchParams(params).toString();
+    const q = new URLSearchParams(withOffset(params)).toString();
     return get<Paged<UsageRecord> | UsageRecord[]>(`/api/v1/usage${q ? `?${q}` : ''}`);
   },
   wallet: () => get<CreditWallet>('/api/v1/credits/wallet'),
   transactions: (params: Record<string, string> = {}) => {
-    const q = new URLSearchParams(params).toString();
+    const q = new URLSearchParams(withOffset(params)).toString();
     return get<Paged<CreditTransaction> | CreditTransaction[]>(`/api/v1/credits/transactions${q ? `?${q}` : ''}`);
   },
   adjustCredits: (data: { userId: string; amount: number; description?: string }) =>
@@ -272,7 +330,8 @@ export const api = {
   updateSystemSetting: (key: string, value: unknown) =>
     patch(`/api/v1/admin/system-settings`, { settings: { [key]: value } }),
   providerHealth: () => get<ProviderHealthItem[]>('/api/v1/admin/provider-health'),
-  health: () => get<HealthStatus>('/health'),
+  // /health answers uptimeSeconds; the pages read uptimeSec.
+  health: () => get<HealthStatus & { uptimeSeconds?: number }>('/health').then((h) => ({ ...h, uptimeSec: h.uptimeSec ?? h.uptimeSeconds })),
   healthReady: () => get<HealthStatus>('/health/ready'),
 };
 
@@ -288,12 +347,17 @@ export async function testGatewayConnection(baseUrl: string, key: string): Promi
 
 /** Minimal gateway chat test through the dashboard session (RoutingProfiles "Test chain").
  *  Sends one tiny prompt; the router picks the chain's first available model. */
-export async function testGatewayChat(model: string, prompt = 'Reply with the single word: ok'): Promise<{ model: string; provider: string; content: string }> {
+/**
+ * Test a model ref through the gateway. The gateway only accepts ROUTER API
+ * keys — the dashboard session token 401s here (0.1.5), so the caller passes
+ * the key the user pasted (see Routing Profiles).
+ */
+export async function testGatewayChat(model: string, routerKey: string, prompt = 'Reply with the single word: ok'): Promise<{ model: string; provider: string; content: string }> {
   const res = await fetch(`${API_BASE}/v1/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+      Authorization: `Bearer ${routerKey}`,
     },
     body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], maxTokens: 16 }),
   });
