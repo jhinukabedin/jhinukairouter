@@ -423,3 +423,30 @@ expected — user still has to add the Tokensbd provider (not added yet).
   BHPanel container update (same env vars). After deploy the user
   re-adds the providers (in-memory wipe) — Tokens.bd as before, and
   OpenRouter with the free-only box ticked (or the row toggle + Sync).
+
+## 0.1.7 — 21 Nov (manual Add model + free-only sync never removes hand-added models)
+
+- **Ask (user, 21 Nov 12:16):** "ekta option kora jay sync korle free ja
+  thakbe segulo asbe r ekta button thakbe ta holo add model jodi paid hoy
+  tobe model add kora jabe" — sync should bring only free models, and
+  there should be an Add Model button so a paid model can still be added
+  by hand.
+- **Fix:** models now carry `source: 'synced' | 'manual'`. Sync-created
+  models are 'synced'; the direct POST /models path (dashboard Add Model
+  form) is 'manual'. The 0.1.6 prune now skips manual models — a paid
+  model added by hand survives every later free-only sync (without this
+  the next sync would have deleted exactly the model he had just added).
+  Dashboard: every provider row has an "Add model" button (prompts for
+  the exact model id, adds it to that provider with sync-like defaults);
+  the full Add Model form still exists on the Models page (provider,
+  pricing, capabilities). The Models table marks hand-added rows
+  "· manual".
+- **Tests:** free-only suite grows to 4 (new: a manually added paid
+  model survives a free-only sync while the synced paid one is pruned).
+  Tests now **150**: root 72/72, apps/api 62/62 (was 61), apps/web 16/16.
+- Version bumped to 0.1.7 (root + api package.json, health string,
+  workflow tags, DEPLOYMENT.md). NOTE: 0.1.6 was pushed to GitHub
+  (HEAD 9226ef23) but never deployed — 0.1.7 folds it in, so the
+  workflow tag goes 0.1.5 -> 0.1.7 in one edit and there is only one
+  container restart / one provider re-add. Deploy = push -> Actions
+  build -> GHCR 0.1.7 -> BHPanel container update (same env vars).
