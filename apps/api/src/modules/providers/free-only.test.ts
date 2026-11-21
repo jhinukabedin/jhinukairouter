@@ -123,4 +123,38 @@ describe('OpenRouter free-only sync', () => {
     expect(r.data.pruned).toBe(0);
     await app.close();
   });
+
+  it('keeps a manually added paid model through a free-only sync', async () => {
+    const { app } = await makeTestApp();
+    const { token } = await registerUser(app, 'freeonly4@example.com');
+    const id = await makeProvider(app, token, { freeOnly: true });
+
+    // A paid model the admin added by hand (e.g. via the Add model button).
+    const manual = await app.inject({
+      method: 'POST',
+      url: '/api/v1/models',
+      headers: authHeader(token),
+      payload: { providerId: id, modelId: 'openai/gpt-4o', displayName: 'openai/gpt-4o' },
+    });
+    expect(manual.statusCode).toBe(201);
+    expect((manual.json() as { data: { source: string } }).data.source).toBe('manual');
+
+    // Sync with the flag off first: all 4 catalog models land (2 free, 2 paid).
+    await app.inject({ method: 'PATCH', url: `/api/v1/providers/${id}`, headers: authHeader(token), payload: { freeOnly: false } });
+    const first = await sync(app, token, id);
+    expect(first.data.synced).toBe(4);
+
+    // Flag back on + sync: the 1 synced paid model is pruned, the 2 free
+    // ones stay — and so does the manually added paid one.
+    await app.inject({ method: 'PATCH', url: `/api/v1/providers/${id}`, headers: authHeader(token), payload: { freeOnly: true } });
+    const second = await sync(app, token, id);
+    expect(second.data.synced).toBe(2);
+    expect(second.data.pruned).toBe(1);
+    expect(await listModelIds(app, token)).toEqual([
+      'deepseek/deepseek-r1:free',
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'openai/gpt-4o',
+    ]);
+    await app.close();
+  });
 });
