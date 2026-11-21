@@ -73,7 +73,7 @@ export default function Models() {
           <Table headers={['Model', 'Provider', 'Context', 'In / Out price (per 1M)', 'Capabilities', 'Enabled', '']}>
             {models.map((m) => (
               <tr key={m.id} className="border-b border-slate-100 dark:border-slate-800">
-                <Td><span className="font-medium">{m.displayName}</span><br /><span className="font-mono text-xs text-slate-500">{m.modelId}</span></Td>
+                <Td><span className="font-medium">{m.displayName}</span>{m.source === 'manual' ? ' · manual' : ''}<br /><span className="font-mono text-xs text-slate-500">{m.modelId}</span></Td>
                 <Td>{m.provider?.name ?? m.providerId}</Td>
                 <Td>{m.contextWindow.toLocaleString()}</Td>
                 <Td>{m.pricing ? `${m.pricing.inputPricePer1M} / ${m.pricing.outputPricePer1M} ${m.pricing.currency}` : '—'}</Td>
