@@ -42,6 +42,9 @@ export interface ModelRecord {
   providerId: string;
   modelId: string;
   displayName: string;
+  /** How the model got here: 'synced' (from the provider's catalog) or
+   *  'manual' (added by hand). Free-only pruning never removes manual ones. */
+  source: 'synced' | 'manual';
   contextWindow: number;
   maxOutputTokens: number;
   supportsStreaming: boolean;
