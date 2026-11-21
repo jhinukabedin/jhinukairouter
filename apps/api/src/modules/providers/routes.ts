@@ -292,6 +292,7 @@ export function registerProviderRoutes(app: FastifyInstance, deps: ProviderModul
         providerId: id,
         modelId,
         displayName: modelId,
+        source: 'synced',
         contextWindow: 0, // unknown until admin sets it or a known-defaults map is added
         maxOutputTokens: 0,
         supportsStreaming: true,
@@ -303,12 +304,14 @@ export function registerProviderRoutes(app: FastifyInstance, deps: ProviderModul
       synced.push({ ...created });
     }
     // Prune models the filter excludes (e.g. paid ones synced before the
-    // flag was turned on). Only when the filtered sync actually returned
-    // models — an empty provider answer must never wipe the list.
+    // flag was turned on) — but NEVER a model added by hand: a paid model
+    // the admin added deliberately must survive every later sync.
+    // Only when the filtered sync actually returned models — an empty
+    // provider answer must never wipe the list.
     let pruned = 0;
     if (record.freeOnly && isOpenRouter && synced.length > 0) {
       for (const m of await deps.models.list({ providerId: id })) {
-        if (!m.modelId.endsWith(':free')) {
+        if (m.source !== 'manual' && !m.modelId.endsWith(':free')) {
           if (await deps.models.delete(m.id)) pruned += 1;
         }
       }
