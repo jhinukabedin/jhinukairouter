@@ -30,6 +30,8 @@ export interface ProviderRecord {
   ownerId: string | null;
   priority: number;
   timeoutMs: number;
+  /** Sync only free models (OpenRouter: ids ending in `:free`). Default false. */
+  freeOnly: boolean;
   /** Last 4 chars of the stored key, for display only. */
   keyHint: string | null;
   createdAt: string;
