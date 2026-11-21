@@ -81,6 +81,20 @@ export default function Providers() {
     }
   };
   const isOpenRouter = (p: Provider) => p.type === 'openrouter' || p.baseUrl.includes('openrouter.ai');
+  const addModel = async (p: Provider) => {
+    const modelId = window.prompt(`Add a model to ${p.name} (exact model id, e.g. openai/gpt-4o):`);
+    if (!modelId?.trim()) return;
+    try {
+      await api.createModel({
+        providerId: p.id, modelId: modelId.trim(), displayName: modelId.trim(),
+        contextWindow: 0, maxOutputTokens: 0,
+        supportsStreaming: true, supportsTools: false, supportsVision: false, supportsReasoning: false, enabled: true,
+      });
+      alert(`Model "${modelId.trim()}" added to ${p.name}. It stays even when a free-only Sync runs.`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not add model.');
+    }
+  };
   const toggleFreeOnly = async (p: Provider) => {
     try {
       await api.updateProvider(p.id, { freeOnly: !p.freeOnly });
@@ -115,6 +129,7 @@ export default function Providers() {
                   <div className="flex gap-1">
                     <Button variant="secondary" onClick={() => void test(p)}>Test</Button>
                     <Button variant="secondary" onClick={() => void sync(p)}>Sync models</Button>
+                    <Button variant="secondary" onClick={() => void addModel(p)}>Add model</Button>
                     {isOpenRouter(p) && (
                       <Button variant="secondary" onClick={() => void toggleFreeOnly(p)}>
                         {p.freeOnly ? 'Free only: On' : 'Free only: Off'}
