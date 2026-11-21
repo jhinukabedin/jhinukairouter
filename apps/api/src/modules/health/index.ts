@@ -7,7 +7,7 @@ export async function healthRoutes(fastify: FastifyInstance, opts: { db: Db }): 
   fastify.get('/health', async () => ({
     status: 'ok',
     service: 'jhinuk-ai-router',
-    version: '0.1.4',
+    version: '0.1.5',
     uptimeSeconds: Math.floor(process.uptime()),
   }));
 
