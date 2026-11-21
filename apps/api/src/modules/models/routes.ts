@@ -77,6 +77,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelModuleDeps)
       providerId: data.providerId,
       modelId: data.modelId,
       displayName: data.displayName ?? data.modelId,
+      source: 'manual',
       contextWindow: data.contextWindow,
       maxOutputTokens: data.maxOutputTokens,
       supportsStreaming: data.supportsStreaming,
