@@ -92,6 +92,7 @@ export interface Provider {
 export interface ModelPricing { inputPricePer1M: number; outputPricePer1M: number; currency: string }
 export interface AIModel {
   id: string; providerId: string; provider?: Provider | null; modelId: string; displayName: string;
+  source?: 'synced' | 'manual';
   contextWindow: number; maxOutputTokens: number; supportsStreaming: boolean; supportsTools: boolean;
   supportsVision: boolean; supportsReasoning: boolean; enabled: boolean; pricing?: ModelPricing | null;
 }
