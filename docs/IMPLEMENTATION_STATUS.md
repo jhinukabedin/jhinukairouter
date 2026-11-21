@@ -331,3 +331,56 @@ on/off should be controllable from the admin dashboard instead of an env var.
   Tokensbd provider (OpenAI-compatible protocol, 20:10 key
   tok_live_9aa7744b…), then Test (expect "Connection OK") then Sync
   Models. Usage/Logs/Credits pages will also show rows now.**
+
+**0.1.4 LIVE 20 Nov ~21:33** — container updated in place to GHCR 0.1.4
+(Actions run 44763880357 SUCCESS, workflow tag commit b508da4, code HEAD
+d3ab2b76, sync record 33 entries). Verified live: / 200, /health ok v0.1.4,
+database up, registration closed, /v1/models 401. Providers/models were
+wiped by the restart as expected — user re-adds Tokensbd after this.
+Still open (found in the 21:30 page audit, for 0.1.5): Usage/Request Logs
+pagination sends `page` which the API ignores (always first 25 rows);
+Sync Models alert shows "[object Object]" (models are objects, not id
+strings); Routing Profiles "Test chain" sends the dashboard session token
+but /v1 only accepts router API keys (always 401).
+
+## 0.1.5 — 21 Nov (fixes the blank page after login + the rest of the page audit)
+
+- **Symptom (reported 21 Nov 11:17):** after a fresh login the dashboard
+  shows a blank page. Login itself works; the reload lands on Overview.
+- **Root cause (verified in code):** the usage-summary API returns the
+  breakdowns as RECORDS keyed by model/provider/key/user
+  (`byModel: {"tokens/gpt-6-luna": {requests, inputTokens, outputTokens,
+  estimatedCost}}`), with `estimatedProviderCost` / `platformCreditUsed`
+  at the top — but the web client typed them as ARRAYS with a `cost`
+  field, and Overview does `summary.byModel.map(...)`. `{}.map` throws,
+  React unmounts, blank page. Why it only bit now: in 0.1.2 auth was
+  broken so the summary call 401'd (summary null, no crash); in 0.1.3
+  the user stayed on the Providers hash and never freshly landed on
+  Overview; the first fresh login on 0.1.4 loaded the summary
+  successfully — and crashed. Usage.tsx guarded with `?.length`, so it
+  showed empty breakdowns instead of crashing.
+- **Fix:** `apps/web/src/lib/api.ts` gains `normalizeUsageSummary()`
+  (wire record -> page array, `estimatedCost`/`platformCreditUsed` ->
+  `estimatedCost`/`platformCharge`, buckets and daily/monthly
+  `estimatedCost` -> `cost`; accepts already-normalised arrays too, so
+  a future API change cannot blank the page again) and `usageSummary()`
+  applies it; `health()` maps `uptimeSeconds` -> `uptimeSec` (the page
+  showed "Uptime 0 min"). Pagination (audit #2): new `withOffset()`
+  translates page -> offset for `usageList`/`transactions` (the APIs
+  take limit/offset only) and `normalizePaged` derives the page from
+  offset/limit. Sync (audit #3): `toModelIds()` turns the returned
+  model objects into id strings (the alert showed "[object Object]").
+  Test chain (audit #4): `testGatewayChat(model, routerKey)` takes the
+  router API key as a parameter; Routing Profiles has a "Router API key
+  (for Test buttons)" field stored in localStorage
+  (`jar_router_test_key`), with a hint to create one on the API Keys
+  page — the gateway never accepted the dashboard session token.
+- **Tests:** 5 new cases in `apps/web/src/lib/__tests__/api-shape.test.ts`
+  (normalizeUsageSummary wire/empty/array shapes, withOffset,
+  toModelIds, normalizePaged page-from-offset). Tests now **146**:
+  root 72/72, apps/api 58/58, apps/web 16/16 (was 11).
+- Version bumped to 0.1.5 (root + api package.json, health string, workflow
+  tags, DEPLOYMENT.md). Deploy = push -> Actions build -> GHCR 0.1.5 ->
+  BHPanel container update (same env vars). After deploy the user
+  re-adds the Tokensbd provider (still not added) and logs in fresh —
+  Overview must render with the stats cards and empty breakdowns.
