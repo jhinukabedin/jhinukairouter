@@ -87,7 +87,7 @@ export interface SessionItem {
 }
 export interface Provider {
   id: string; name: string; type: string; baseUrl: string; protocol: 'openai' | 'anthropic';
-  enabled: boolean; isGlobal: boolean; ownerId?: string | null; priority: number; timeoutMs: number; createdAt: string;
+  enabled: boolean; isGlobal: boolean; ownerId?: string | null; priority: number; timeoutMs: number; freeOnly?: boolean; createdAt: string;
 }
 export interface ModelPricing { inputPricePer1M: number; outputPricePer1M: number; currency: string }
 export interface AIModel {
@@ -246,15 +246,15 @@ export const api = {
   listProviders: () => get('/api/v1/providers').then((b) => normalizePaged<Provider>(b).data),
   createProvider: (data: {
     name: string; type: string; baseUrl: string; protocol: 'openai' | 'anthropic';
-    apiKey?: string; enabled?: boolean; priority?: number; timeoutMs?: number;
+    apiKey?: string; enabled?: boolean; priority?: number; timeoutMs?: number; freeOnly?: boolean;
   }) => post('/api/v1/providers', data).then((b) => unwrapData<Provider>(b)),
   updateProvider: (id: string, data: Partial<Provider> & { apiKey?: string }) =>
     patch(`/api/v1/providers/${id}`, data).then((b) => unwrapData<Provider>(b)),
   deleteProvider: (id: string) => del(`/api/v1/providers/${id}`),
   testProvider: (id: string) => post(`/api/v1/providers/${id}/test`).then((b) => unwrapData<{ ok: boolean; latencyMs?: number; error?: string }>(b)),
   syncProviderModels: (id: string) => post(`/api/v1/providers/${id}/sync-models`).then((b) => {
-    const d = unwrapData<{ synced: number; models: unknown }>(b);
-    return { synced: d.synced ?? 0, models: toModelIds(d.models) };
+    const d = unwrapData<{ synced: number; models: unknown; pruned?: number }>(b);
+    return { synced: d.synced ?? 0, models: toModelIds(d.models), pruned: d.pruned ?? 0 };
   }),
 
   // --------------------------------------------------------------- models
